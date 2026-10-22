@@ -42,7 +42,6 @@ Full installation and configuration options follow.
 - [Session todos](#session-todos)
 - [State and backup](#state-and-backup)
 - [Honest limits](#honest-limits)
-- [Release validation and publishing](#release-validation-and-publishing)
 - [License](#license)
 
 ## Compatibility
@@ -329,34 +328,6 @@ Durable state (plans, run journal, single-owner runtime lock) lives under the `~
 - **Native subagent tool headers belong to OpenCode.** The inspected V2 CLI versions `2.0.27`–`2.0.32` render `<agent ID> Subagent — description`; the installed SDK has no scoped hook to reorder that heading or color only the name. OmO leaves it unchanged. The source workspace records the accepted limitation in `docs/adr/0019-native-subagent-rendering.md`.
 - **tmux mirroring is opt-in** and reports its capability (off on win32) rather than silently degrading.
 - **Validation always uses an explicit `--server`.** The plugin never connects to a managed host implicitly.
-
-## Release validation and publishing
-
-The current official release is `0.1.0`, published as `@shtora/omo` on the `latest` dist-tag. Install with `@shtora/omo`, or pin `@shtora/omo@0.1.0` for a reproducible configuration.
-
-**Migrating from the beta package:** `@hallaxius/omo-beta` (dist-tag `beta`, last release `0.1.0-beta.3`) is superseded. Replace the host `plugins` entry `@hallaxius/omo-beta@beta` with `@shtora/omo` and reload the host; tool names, commands, agent IDs and configuration schema are unchanged, but the `shtora.omo` state scope is new, so plans, teams and memory written under `hallaxius.omo` are not picked up automatically. The beta package receives no further releases.
-
-From the package root, run:
-
-```sh
-bun run check
-bun run test:package
-bun run test:mcp-host-package
-bun run test:host-package
-bun run test:host-lifecycle
-bun run test:host-rollback
-bun publish --dry-run
-```
-
-The package smoke installs the actual tarball in an isolated project and resolves both public exports; the host smokes exercise registration, restart and rollback without provider calls; the dry-run reviews the tarball without publishing. `bun publish` re-runs the same lifecycle gates through `prepublishOnly` before anything reaches the registry.
-
-Publishing is a separate action. To publish the reviewed release artifact:
-
-```sh
-bun publish
-```
-
-`bun publish` applies `publishConfig` (`access: public`, `tag: latest`) and uses the registry credentials in `~/.npmrc`. After publication, confirm the release with `npm view @shtora/omo version`.
 
 ## License
 
