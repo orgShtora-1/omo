@@ -1,0 +1,76 @@
+// Shared OmO options: $XDG_CONFIG_HOME/opencode/omo.jsonc, or
+// ~/.config/opencode/omo.jsonc. OMO_CONFIG_HOME overrides that directory.
+// Merge into an existing file; the plugin preserves user configuration.
+{
+  "schemaVersion": 1,
+  // Omitted models inherit the host configuration. Uncomment with real IDs:
+  // "agents": {
+  //   "sisyphus": { "model": "provider/model#variant" },
+  //   "oracle": { "model": "provider/model#variant" }
+  // },
+  "agents": {},
+  "profiles": [{ "id": "planner", "mode": "subagent", "allowWrite": false }],
+  "categories": [{ "id": "investigate", "agent": "planner" }],
+  "execution": {
+    "maxChildren": 3,
+    "timeoutMs": 1200000,
+    // Each mode falls back to timeoutMs when omitted. Limits are optional.
+    "foregroundTimeoutMs": 1200000,
+    "backgroundTimeoutMs": 1200000,
+    // Capacity bounds: queued delegations fail fast with an actionable error
+    // instead of pending forever, and a child with no observable host
+    // progress for this window is cancelled and its slot released.
+    "admissionTimeoutMs": 120000,
+    "staleTimeoutMs": 900000,
+    "providerLimits": {},
+    "modelLimits": {},
+    // Opt-in existence + project-root confinement, not artifact execution.
+    "verifyArtifacts": false,
+    "maxRetries": 2,
+    "maxAttempts": 3,
+    "fallback": false
+  },
+  "skills": {
+    "auto": true,
+    "recommendedLimit": 5,
+    "required": [],
+    // Auto-install a missing skill from skills.sh into the project `.agents`
+    // destination when nothing local matches (default true). Audit guard
+    // refuses `fail` verdicts when requireAuditPass is true (default true).
+    "autoInstall": true,
+    "requireAuditPass": true
+  },
+  // Automatic MCP presets. Host mcp.servers entries with the same names win.
+  // Change fields here only to adjust a preset; omitted entries use defaults.
+  "mcp": {
+    "enabled": true,
+    "servers": {
+      "github": { "disabled": false },
+      "context7": { "disabled": false },
+      "skills": {
+        "disabled": false,
+        "environment": {
+          // Optional: enable for authenticated skills actions. Keep the token
+          // in .env beside the active omo.jsonc, never in this file.
+          // "VERCEL_OIDC_TOKEN": "{env:VERCEL_OIDC_TOKEN}"
+          // Danger: opting in lets install_skill/update_skill/remove_skill
+          // write to .agents/skills after the upstream preview + confirm flow.
+          // "SKILLS_ALLOW_MUTATIONS": "true"
+        }
+      },
+      // Opt-in presets; set disabled false only when needed.
+      "vercel": { "disabled": true },
+      "cloudflare": { "disabled": true }
+    }
+  },
+  // Package manager OmO always uses for the commands it shells out (today the
+  // skills auto-installer, MCP preset and doctor remediation):
+  // npm | bun | yarn | pnpm. Default "bun" (npx-style runner: bun->bunx,
+  // npm->npx, yarn->yarn dlx, pnpm->pnpm dlx).
+  "runtime": {
+    "packageManager": "bun"
+  }
+  // Dream/time reflection trigger over the memory queue (requires memory_enabled).
+  // Omitted keys fall back to these defaults:
+  // "memory_dream": { "enabled": true, "idleMinutes": 30, "minHoursBetween": 24 }
+}

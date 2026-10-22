@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/terminal/tui.ts",
+    "scripts/omo-backup.ts",
+    "test/**/*.test.ts",
+    "test/helpers/**/*.ts",
+    "test/support/**/*.ts",
+    "test/evals/runner.ts",
+    "test/evals/scenarios.ts",
+    "test/fixtures/lsp-server.ts"
+  ],
+  "project": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
+  "ignore": ["test/fixtures/agents-probe-plugin/**"],
+  "ignoreBinaries": ["opencode"]
+}

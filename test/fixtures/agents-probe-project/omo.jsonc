@@ -1,0 +1,5 @@
+// @shtora/omo configuration. Models inherit the host unless configured.
+{
+  "schemaVersion": 1,
+  "agents": {},
+}

@@ -1,0 +1,82 @@
+{
+  "name": "@shtora/omo",
+  "version": "0.1.0",
+  "description": "OpenCode V2 agent orchestration with durable plans, parallel delegation and verification",
+  "license": "MIT",
+  "author": "shtora",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orgShtora-1/omo.git"
+  },
+  "homepage": "https://github.com/orgShtora-1/omo#readme",
+  "bugs": {
+    "url": "https://github.com/orgShtora-1/omo/issues"
+  },
+  "keywords": [
+    "opencode",
+    "agents",
+    "orchestration",
+    "parallel",
+    "delegation",
+    "planning",
+    "subagents",
+    "bun"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/terminal/tui.d.ts",
+      "import": "./dist/terminal/tui.js"
+    }
+  },
+  "files": [
+    "dist",
+    "server.ts",
+    "tui.ts",
+    "README.md",
+    "examples/opencode.jsonc",
+    "examples/omo.jsonc"
+  ],
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  },
+  "scripts": {
+    "typecheck": "bunx --bun tsc --noEmit",
+    "build": "bun scripts/build.ts",
+    "prepack": "bun run build",
+    "prepublishOnly": "bun run check && bun run test:package && bun run test:mcp-host-package",
+    "test:package": "bun scripts/package-smoke.ts",
+    "test:host-package": "bun scripts/host-package-smoke.ts",
+    "test:host-rollback": "bun scripts/host-rollback-smoke.ts",
+    "test:host-lifecycle": "bun scripts/host-lifecycle-smoke.ts",
+    "test:mcp-host-package": "bun scripts/mcp-package-smoke.ts",
+    "test:skills-capability": "bun scripts/skills-capability-smoke.ts",
+    "test:unit": "bun test test/unit",
+    "test:integration": "bun test test/integration",
+    "test:evals": "bun test test/evals",
+    "test:live": "bun test test/live",
+    "lint": "bunx --bun biome check .",
+    "format": "bunx --bun biome check --write .",
+    "check": "bun run lint && bun run build && bun run typecheck && bun run test:unit && bun run test:integration"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/bun": "1.4.2",
+    "solid-js": "1.9.17",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.32"
+  }
+}

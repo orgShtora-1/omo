@@ -1,0 +1,15 @@
+// OpenCode V2 host configuration for @shtora/omo.
+//
+// HOW TO ADOPT: merge this example into your host opencode.jsonc (project
+// or global); append the plugin without replacing existing entries.
+// OmO-specific options live in omo.jsonc. The plugin never writes host
+// configuration itself.
+//
+// MCP presets are contributed by the plugin at startup; no mcp.servers block
+// is required here. A host entry with the same preset name still takes
+// precedence, including disabled: true. Verify live state with
+// `opencode mcp list` and sign in through /mcps when a remote server asks.
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [{ "package": "@shtora/omo" }]
+}
