@@ -134,8 +134,7 @@ export function decideToolGuard(
   if (typeof tool !== "string" || !tool.trim()) {
     return {
       verdict: "deny",
-      reason:
-        "shtora.omo tool guard: tool call without a tool name while tool_guards is enabled",
+      reason: "shtora.omo tool guard: tool call without a tool name while tool_guards is enabled",
     }
   }
   for (const list of ["write", "read"] as const) {

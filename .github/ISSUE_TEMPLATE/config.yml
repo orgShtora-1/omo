@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & discussions
+    url: https://github.com/orgShtora-1/omo/discussions
+    about: Ask questions, share setups and use cases in Discussions
+  - name: OpenCode documentation
+    url: https://opencode.ai/v2/docs/
+    about: Host behavior, plugin SDK and configuration documentation
