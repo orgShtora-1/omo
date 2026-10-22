@@ -41,10 +41,7 @@ async function nativePackDestination(destination: string): Promise<string> {
     stdout: "pipe",
     stderr: "ignore",
   })
-  const [stdout, code] = await Promise.all([
-    new Response(child.stdout).text(),
-    child.exited,
-  ])
+  const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited])
   const translated = stdout.trim()
   return code === 0 && translated ? translated : destination
 }
