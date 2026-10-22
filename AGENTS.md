@@ -1,5 +1,14 @@
 # @shtora/omo — instruções de implementação
 
+> Refreshed by `init-deep`. Measured: package `@shtora/omo` v0.1.0, branch `main`,
+> TypeScript ESM (single workspace, 0 workspaces declared), 88 source files under
+> `src/` across 30 domain subdirectories (agents, boulder, config, context, deepini,
+> delegation, diagnostics, doctor, events, evidence, execution, goal, handoff, hashline,
+> host, lsp, mcp, memory, plans, refactor, runtime, sessions, skills, slashcommands,
+> state, teams, telemetry, terminal, todo, worktrees). Bundled via `scripts/build.ts`;
+> `bun run build`. Runtime entry Promise of `@opencode/plugin`. Biome for lint/format,
+> `tsc` for typecheck.
+
 ## Entrada
 
 Leia `docs/PRODUCT-SPEC.md` e os ADRs em `docs/adr/` antes de alterar runtime. Registre decisões arquiteturais novas em `docs/adr/`.
