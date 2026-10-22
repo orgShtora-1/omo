@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a problem with @shtora/omo
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please include logs and what you expected to happen.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include logs, error output, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: OpenCode CLI version, Bun version, OS, and @shtora/omo version (`omo_doctor` prints most of this).
+    validations:
+      required: true

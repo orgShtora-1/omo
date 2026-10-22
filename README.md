@@ -1,5 +1,6 @@
 # @shtora/omo
 
+[![CI](https://github.com/orgShtora-1/omo/actions/workflows/ci.yml/badge.svg)](https://github.com/orgShtora-1/omo/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@shtora/omo)](https://www.npmjs.com/package/@shtora/omo)
 [![license](https://img.shields.io/npm/l/@shtora/omo)](./LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.4.2-fdd50b)](https://bun.sh)
@@ -8,8 +9,31 @@ Maintained by Shtora.
 
 `@shtora/omo` is a native [OpenCode V2](https://opencode.ai/v2) plugin that turns the host into an orchestrated agent runtime: durable plans with evidence-gated steps, bounded parallel delegation to routed specialists, session todos joined with live plan progress, handoff artifacts, memory with dream/time reflection, LSP intelligence with reviewed edits, and an optional TUI face.
 
+## Why OmO?
+
+- **Plans that verify.** A plan step only counts as complete when its evidence verifies — model self-reports don't count.
+- **Parallelism with guardrails.** Up to 3 routed specialists per project, disjoint file ownership, bounded attempts, fail-fast admission.
+- **Native to OpenCode V2.** One exact-pinned runtime dependency (`@opencode/plugin`), validated live against host CLI 2.0.32, no config drift.
+- **Memory that reflects.** Idle-triggered dream/time reflection, bounded queues, memory files committed to git.
+- **Fail closed everywhere.** Corrupt config is preserved and reported, stale files are refused by hashline edits, capability is reported instead of silently degrading.
+
+## Quick start
+
+1. Install [OpenCode](https://opencode.ai/v2) and [Bun](https://bun.sh) ≥ 1.4.2.
+2. Register the plugin and restart (or reload) the host:
+
+   ```sh
+   opencode plugin add @shtora/omo
+   ```
+
+3. Ask for a plan — `/omo-plan` goes straight to the project runtime. Diagnose the install any time with `/omo-doctor`.
+
+Full installation and configuration options follow.
+
 ## Table of contents
 
+- [Why OmO?](#why-omo)
+- [Quick start](#quick-start)
 - [Compatibility](#compatibility)
 - [Installation](#installation)
 - [Configuration](#configuration)
