@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -13,6 +14,10 @@ async function tempStore() {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-limits-"))
   const store = openGoalStore(dir)
   return { dir, store, cleanup: () => rm(dir, { recursive: true, force: true }) }
+}
+
+function dbPath(dir: string) {
+  return join(dir, "goal.db")
 }
 
 const session = "ses_owner"
@@ -176,14 +181,18 @@ test.each(["limit-value", "limit-dimension", "status"])(
   async (kind) => {
     const { dir, store, cleanup } = await tempStore()
     try {
-      const base = store.set(session, "ship release", { maxCost: 1 })
-      if (!base) throw new Error("missing goal")
-      const corrupt: Record<string, unknown> = { ...base }
-      if (kind === "limit-value") corrupt.limits = { maxCost: -5 }
-      if (kind === "limit-dimension") corrupt.limitExceeded = "time"
-      if (kind === "status") corrupt.status = "abandoned"
-      const file = join(dir, `${session}.json`)
-      await writeFile(file, JSON.stringify(corrupt), "utf8")
+      store.set(session, "ship release", { maxCost: 1 })
+      const db = new Database(dbPath(dir))
+      if (kind === "limit-value") {
+        db.run("UPDATE omo_goals SET limits_max_cost = -5 WHERE session_id = ?", [session])
+      }
+      if (kind === "limit-dimension") {
+        db.run("UPDATE omo_goals SET limit_exceeded = 'time' WHERE session_id = ?", [session])
+      }
+      if (kind === "status") {
+        db.run("UPDATE omo_goals SET status = 'abandoned' WHERE session_id = ?", [session])
+      }
+      db.close()
       expect(store.get(session)).toBeNull()
       expect(store.resume(session)).toBeNull()
       expect(store.cancel(session)).toBeNull()

@@ -1,4 +1,5 @@
 import type { Plan, PlanInput } from "../contracts"
+import { OmoError } from "../errors/base.js"
 
 export type PlanErrorCode =
   | "duplicate-step"
@@ -16,13 +17,9 @@ export type PlanErrorCode =
   | "reason-required"
   | "parent-cancelled"
 
-export class PlanError extends Error {
-  constructor(
-    readonly code: PlanErrorCode,
-    detail: string,
-  ) {
-    super(`${code}: ${detail}`)
-    this.name = "PlanError"
+export class PlanError extends OmoError {
+  constructor(code: PlanErrorCode, detail: string) {
+    super(code, `${code}: ${detail}`)
   }
 }
 

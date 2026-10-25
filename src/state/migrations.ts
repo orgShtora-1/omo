@@ -1,4 +1,5 @@
 import type { Plan } from "../contracts"
+import { OmoError } from "../errors/base.js"
 import { createPlan } from "../plans/model"
 
 export type StateErrorCode =
@@ -7,13 +8,9 @@ export type StateErrorCode =
   | "corrupt-state"
   | "future-version"
   | "unsupported-version"
-export class StateError extends Error {
-  constructor(
-    readonly code: StateErrorCode,
-    detail: string,
-  ) {
-    super(`${code}: ${detail}`)
-    this.name = "StateError"
+export class StateError extends OmoError {
+  constructor(code: StateErrorCode, detail: string) {
+    super(code, `${code}: ${detail}`)
   }
 }
 

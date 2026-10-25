@@ -20,6 +20,18 @@ export function openRunJournal(path: string) {
   db.run("PRAGMA busy_timeout = 5000")
   db.run("PRAGMA journal_mode = WAL")
   db.run("CREATE TABLE IF NOT EXISTS omo_runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_omo_runs_parent_task ON omo_runs(json_extract(payload, '$.request.parentSessionID'), json_extract(payload, '$.request.taskID'))",
+  )
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_omo_runs_parent_task_phase ON omo_runs(json_extract(payload, '$.request.parentSessionID'), json_extract(payload, '$.request.taskID'), json_extract(payload, '$.phase'))",
+  )
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_omo_runs_scope_phase ON omo_runs(json_extract(payload, '$.scope'), json_extract(payload, '$.phase'))",
+  )
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_omo_runs_attempted_at ON omo_runs(json_extract(payload, '$.startedAt') DESC)",
+  )
   const get = db.query<{ payload: string }, [string]>("SELECT payload FROM omo_runs WHERE id = ?")
   const all = db.query<{ payload: string }, []>("SELECT payload FROM omo_runs ORDER BY rowid")
   const write = db.query(
@@ -31,6 +43,15 @@ export function openRunJournal(path: string) {
     return JSON.parse(row.payload)
   }
   const records = (): RunRecord[] => all.all().map((row) => JSON.parse(row.payload))
+  const hasActive = db.query<{ "1": number }, [string, string]>(
+    "SELECT 1 FROM omo_runs WHERE json_extract(payload, '$.request.parentSessionID') = ? AND json_extract(payload, '$.request.taskID') = ? AND json_extract(payload, '$.phase') IN ('intent','prepared','admitted','blocked') LIMIT 1",
+  )
+  const activeRows = db.query<{ payload: string }, [string, string]>(
+    "SELECT payload FROM omo_runs WHERE json_extract(payload, '$.request.parentSessionID') = ? AND json_extract(payload, '$.request.taskID') = ? AND json_extract(payload, '$.phase') IN ('intent','prepared','admitted','blocked') ORDER BY json_extract(payload, '$.updatedAt') DESC",
+  )
+  const unresolvedRows = db.query<{ payload: string }, []>(
+    "SELECT payload FROM omo_runs WHERE json_extract(payload, '$.phase') IN ('intent','prepared','admitted','blocked') ORDER BY rowid",
+  )
   const update = (id: string, patch: Partial<RunRecord>) => {
     const record = { ...read(id), ...patch, updatedAt: Date.now() }
     write.run(id, JSON.stringify(record))
@@ -39,14 +60,7 @@ export function openRunJournal(path: string) {
   return {
     intent(attemptID: string, request: DelegationRequest, resolved: ResolvedDelegation) {
       // A durable intent is conservative: a crash before recording the session blocks readmission.
-      if (
-        records().some(
-          (item) =>
-            item.request.parentSessionID === request.parentSessionID &&
-            item.request.taskID === request.taskID &&
-            ["intent", "prepared", "admitted", "blocked"].includes(item.phase),
-        )
-      )
+      if (hasActive.get(request.parentSessionID, request.taskID))
         throw new Error(`unreconciled-attempt: ${request.taskID}`)
       const record: RunRecord = {
         attemptID,
@@ -141,17 +155,10 @@ export function openRunJournal(path: string) {
     },
     list: records,
     unresolved() {
-      return records().filter((item) =>
-        ["intent", "prepared", "admitted", "blocked"].includes(item.phase),
-      )
+      return unresolvedRows.all().map((row) => JSON.parse(row.payload) as RunRecord)
     },
     retrySafe(parentID: string, taskID: string) {
-      return !records().some(
-        (item) =>
-          item.request.parentSessionID === parentID &&
-          item.request.taskID === taskID &&
-          ["intent", "prepared", "admitted", "blocked"].includes(item.phase),
-      )
+      return !hasActive.get(parentID, taskID)
     },
     close() {
       db.close(true)

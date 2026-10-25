@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs"
+import { readdir, readFile, stat } from "node:fs/promises"
 import { join } from "node:path"
 
 export type FilesystemSkill = {
@@ -9,14 +9,24 @@ export type FilesystemSkill = {
 }
 
 export type SkillCatalogIo = {
-  readDir(path: string): string[]
-  readFile(path: string): string
+  readDir(path: string): Promise<string[]>
+  readFile(path: string): Promise<string>
+  stat(path: string): Promise<{ mtimeMs: number }>
 }
 
 const defaultIo: SkillCatalogIo = {
-  readDir: (path) => readdirSync(path),
-  readFile: (path) => readFileSync(path, "utf8"),
+  readDir: (path) => readdir(path),
+  readFile: (path) => readFile(path, "utf8"),
+  stat: (path) => stat(path),
 }
+
+// TTL-based cache to avoid repeated async I/O in the delegation hot path.
+// Invalidates after CACHE_TTL_MS or when the directory's mtime changes.
+const CACHE_TTL_MS = 60_000
+const catalogCache = new Map<
+  string,
+  { skills: FilesystemSkill[]; loadedAt: number; mtime: number }
+>()
 
 const stripQuotes = (value: string): string => {
   const trimmed = value.trim()
@@ -50,33 +60,73 @@ export function parseSkillFrontmatter(source: string): { name?: string; descript
   return result
 }
 
-export function readAgentsCatalog(
+/**
+ * Read the .agents/skills/ catalog asynchronously.
+ * Uses an in-memory TTL cache to avoid repeated I/O in the delegation hot path.
+ * This is non-blocking and will not stall the event loop.
+ */
+export async function readAgentsCatalog(
   projectDir: string,
   io: SkillCatalogIo = defaultIo,
-): FilesystemSkill[] {
+): Promise<FilesystemSkill[]> {
+  const now = Date.now()
+  const cacheKey = projectDir
+  const cached = catalogCache.get(cacheKey)
+  if (cached && now - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.skills
+  }
+
   const skillsDir = join(projectDir, ".agents", "skills")
   let entries: string[]
   try {
-    entries = io.readDir(skillsDir)
+    entries = await io.readDir(skillsDir)
   } catch {
+    catalogCache.set(cacheKey, { skills: [], loadedAt: now, mtime: now })
     return []
   }
+
+  // Process entries concurrently but limit concurrency to avoid flooding
+  const BATCH_SIZE = 10
   const catalog: FilesystemSkill[] = []
-  for (const id of entries) {
-    const skillFile = join(skillsDir, id, "SKILL.md")
-    let source: string
-    try {
-      source = io.readFile(skillFile)
-    } catch {
-      continue
+
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const batch = entries.slice(i, i + BATCH_SIZE)
+    const results = await Promise.all(
+      batch.map(async (id) => {
+        const skillFile = join(skillsDir, id, "SKILL.md")
+        try {
+          const source = await io.readFile(skillFile)
+          const frontmatter = parseSkillFrontmatter(source)
+          return {
+            id,
+            name: frontmatter.name || id,
+            description: frontmatter.description || "",
+            path: skillFile,
+          }
+        } catch {
+          return null
+        }
+      }),
+    )
+    for (const skill of results) {
+      if (skill) catalog.push(skill)
     }
-    const frontmatter = parseSkillFrontmatter(source)
-    catalog.push({
-      id,
-      name: frontmatter.name || id,
-      description: frontmatter.description || "",
-      path: skillFile,
-    })
   }
+
+  // Get directory mtime for cache invalidation
+  let mtime = now
+  try {
+    const dirStat = await io.stat(skillsDir)
+    mtime = dirStat.mtimeMs
+  } catch {
+    // Directory may have been removed between readDir and stat
+  }
+
+  catalogCache.set(cacheKey, { skills: catalog, loadedAt: now, mtime })
   return catalog
+}
+
+/** Exposed for tests to clear the cache between runs. */
+export function invalidateCatalogCache(): void {
+  catalogCache.clear()
 }

@@ -5,6 +5,7 @@ import type {
   ResolvedDelegation,
   RunHandle,
 } from "../contracts.js"
+import { OmoError } from "../errors/base.js"
 import type { RunEventTracker } from "./events.js"
 
 // Porta estreita do host que o adapter toca (subconjunto estrutural de ctx).
@@ -69,12 +70,9 @@ export type ExecutionErrorCode =
   | "host-error"
   | "unknown-skill"
 
-export class ExecutionError extends Error {
-  readonly code: ExecutionErrorCode
+export class ExecutionError extends OmoError {
   constructor(code: ExecutionErrorCode, message: string, options?: { cause?: unknown }) {
-    super(message, options)
-    this.name = "ExecutionError"
-    this.code = code
+    super(code, message, { cause: options?.cause })
   }
 }
 

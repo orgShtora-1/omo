@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
@@ -10,6 +11,10 @@ async function stateHome() {
   await writeFile(join(stateDir, "plan.md"), "- [ ] Ship\n")
   await writeFile(join(stateDir, "other.md"), "- [x] Done\n")
   return { stateDir, cleanup: () => rm(stateDir, { recursive: true, force: true }) }
+}
+
+function dbPath(stateDir: string) {
+  return join(stateDir, "boulder", "boulder.db")
 }
 
 test("a session tracks several works and each keeps its own plan progress", async () => {
@@ -135,25 +140,20 @@ test("boulder refuses corrupt multi-work records and unknown handoff state", asy
     const work = store.start("owner", "plan.md")
     store.offer("owner", work.id, "invitee")
     expect(() => store.claim("invitee", work.id)).not.toThrow()
-    const target = join(
-      stateDir,
-      "boulder",
-      `${createHash("sha256").update("invitee").digest("hex")}.json`,
-    )
-    const current = JSON.parse(await readFile(target, "utf8")) as Record<string, unknown>
+    const db = new Database(dbPath(stateDir))
     expect(store.list("invitee")).toHaveLength(1)
-    await writeFile(target, JSON.stringify({ ...current, invitations: "broken" }))
-    expect(() => store.list("invitee")).toThrow("invalid-work-state")
-    await writeFile(
-      target,
-      JSON.stringify({
-        ...current,
-        invitations: [{ workID: work.id, fromSessionID: "owner", at: "now", state: "unknown" }],
-      }),
+    // Corrupt invitations: set state to invalid value
+    db.run(
+      "UPDATE omo_boulder_invitations SET state = 'unknown' WHERE session_id = 'invitee' AND from_session_id = 'owner'",
     )
     expect(() => store.claim("invitee", work.id)).toThrow("invalid-work-state")
-    await writeFile(target, JSON.stringify({ version: 2, works: [{ version: 1, id: work.id }] }))
+    // Corrupt works: set status to invalid value
+    db.run("UPDATE omo_boulder_works SET status = 'invalid' WHERE id = ? AND session_id = ?", [
+      work.id,
+      "invitee",
+    ])
     expect(() => store.list("invitee")).toThrow("invalid-work-state")
+    db.close()
   } finally {
     await cleanup()
   }

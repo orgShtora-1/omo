@@ -1,5 +1,6 @@
+import { Database } from "bun:sqlite"
 import { randomUUID } from "node:crypto"
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 
 type GoalStatus = "active" | "paused" | "complete" | "cancelled"
@@ -136,7 +137,7 @@ export function validateLimits(limits: unknown): GoalLimits | undefined {
   return parsed
 }
 
-/** Goal records live one JSON file per session under `<stateHome>/goal/`. */
+/** Goal records live in a SQLite database under `<dir>/goal.db`. */
 export function goalDirectory(stateHome: string): string {
   return join(stateHome, "goal")
 }
@@ -154,76 +155,205 @@ export function validateObjective(objective: string): string {
   return trimmed
 }
 
+type GoalRow = {
+  session_id: string
+  objective: string
+  status: string
+  created_at: string
+  updated_at: string
+  tokens_used: number
+  time_used_seconds: number
+  active_since: number | null
+  cost_used: number
+  continuations: number
+  continuation_pending: number
+  continuation_id: string | null
+  usage_baseline_cost: number | null
+  usage_baseline_input: number | null
+  usage_baseline_output: number | null
+  usage_baseline_reasoning: number | null
+  usage_baseline_cache_read: number | null
+  usage_baseline_cache_write: number | null
+  limits_max_cost: number | null
+  limits_max_tokens: number | null
+  limit_exceeded: string | null
+}
+
 /**
- * Open the per-session goal store. Each session gets its own JSON file under
- * `dir` (atomic tmp+rename writes); a missing or corrupt file reads as null so
- * a damaged record never crashes the host.
+ * Open the per-session goal store backed by SQLite. A missing or corrupt record
+ * reads as null so a damaged record never crashes the host.
  */
 export function openGoalStore(dir: string, options: { now?: () => number } = {}): GoalStore {
   mkdirSync(dir, { recursive: true })
-  const fileFor = (sessionID: string) => join(dir, `${encodeURIComponent(sessionID)}.json`)
-  // Active time is measured with an injectable clock so it is verified without
-  // waiting; every timestamp below comes from the same clock.
-  const clock = options.now ?? Date.now
+  const dbPath = join(dir, "goal.db")
+  const db = new Database(dbPath)
+  db.run("PRAGMA busy_timeout = 5000")
+  db.run("PRAGMA journal_mode = WAL")
 
-  const read = (sessionID: string): Goal | null => {
-    try {
-      const parsed = JSON.parse(readFileSync(fileFor(sessionID), "utf8")) as Goal
-      if (
-        parsed?.version !== 1 ||
-        typeof parsed.objective !== "string" ||
-        parsed.sessionID !== sessionID
-      ) {
-        return null
-      }
-      if (!["active", "paused", "complete", "cancelled"].includes(parsed.status)) return null
-      if (validateObjective(parsed.objective) !== parsed.objective) return null
-      // Records written before usage accounting carry no counters; they read
-      // back with zero defaults instead of failing as corrupt.
-      for (const field of ["tokensUsed", "timeUsedSeconds", "costUsed", "continuations"] as const) {
-        if (parsed[field] === undefined) parsed[field] = 0
-        if (!Number.isFinite(parsed[field]) || parsed[field] < 0) return null
-      }
-      if (!Number.isSafeInteger(parsed.continuations)) return null
-      // An active interval is only meaningful while the goal is active.
-      if (parsed.activeSince !== undefined) {
-        if (parsed.status !== "active") return null
-        if (!Number.isFinite(parsed.activeSince) || parsed.activeSince <= 0) return null
-      }
-      if (
-        parsed.continuationPending !== undefined &&
-        typeof parsed.continuationPending !== "boolean"
-      )
-        return null
-      if (parsed.usageBaseline !== undefined) {
-        try {
-          validSnapshot(parsed.usageBaseline)
-        } catch {
-          return null
-        }
-      }
-      if (parsed.limits !== undefined) {
-        try {
-          parsed.limits = validateLimits(parsed.limits)
-        } catch {
-          return null
-        }
-      }
-      if (
-        parsed.limitExceeded !== undefined &&
-        parsed.limitExceeded !== null &&
-        !["cost", "tokens"].includes(parsed.limitExceeded)
-      )
-        return null
-      // A recorded breach must still correspond to usage above that budget, so a
-      // corrupted record can never hide behind a plausible-looking marker.
-      if (parsed.limitExceeded !== undefined && parsed.limitExceeded !== null) {
-        if (breachedLimit(parsed) !== parsed.limitExceeded) return null
-      }
-      return parsed
-    } catch {
+  db.run(`CREATE TABLE IF NOT EXISTS omo_goals (
+    session_id TEXT PRIMARY KEY,
+    objective TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    tokens_used INTEGER NOT NULL DEFAULT 0,
+    time_used_seconds INTEGER NOT NULL DEFAULT 0,
+    active_since INTEGER,
+    cost_used REAL NOT NULL DEFAULT 0,
+    continuations INTEGER NOT NULL DEFAULT 0,
+    continuation_pending INTEGER NOT NULL DEFAULT 0,
+    continuation_id TEXT,
+    usage_baseline_cost REAL,
+    usage_baseline_input INTEGER,
+    usage_baseline_output INTEGER,
+    usage_baseline_reasoning INTEGER,
+    usage_baseline_cache_read INTEGER,
+    usage_baseline_cache_write INTEGER,
+    limits_max_cost REAL,
+    limits_max_tokens INTEGER,
+    limit_exceeded TEXT
+  )`)
+
+  const getGoal = db.query<GoalRow, [string]>(
+    `SELECT session_id, objective, status, created_at, updated_at, tokens_used,
+            time_used_seconds, active_since, cost_used, continuations,
+            continuation_pending, continuation_id,
+            usage_baseline_cost, usage_baseline_input, usage_baseline_output,
+            usage_baseline_reasoning, usage_baseline_cache_read, usage_baseline_cache_write,
+            limits_max_cost, limits_max_tokens, limit_exceeded
+     FROM omo_goals WHERE session_id = ?`,
+  )
+  const upsertGoal = db.query(
+    `INSERT INTO omo_goals (session_id, objective, status, created_at, updated_at, tokens_used,
+      time_used_seconds, active_since, cost_used, continuations, continuation_pending,
+      continuation_id, usage_baseline_cost, usage_baseline_input, usage_baseline_output,
+      usage_baseline_reasoning, usage_baseline_cache_read, usage_baseline_cache_write,
+      limits_max_cost, limits_max_tokens, limit_exceeded)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       objective = excluded.objective,
+       status = excluded.status,
+       updated_at = excluded.updated_at,
+       tokens_used = excluded.tokens_used,
+       time_used_seconds = excluded.time_used_seconds,
+       active_since = excluded.active_since,
+       cost_used = excluded.cost_used,
+       continuations = excluded.continuations,
+       continuation_pending = excluded.continuation_pending,
+       continuation_id = excluded.continuation_id,
+       usage_baseline_cost = excluded.usage_baseline_cost,
+       usage_baseline_input = excluded.usage_baseline_input,
+       usage_baseline_output = excluded.usage_baseline_output,
+       usage_baseline_reasoning = excluded.usage_baseline_reasoning,
+       usage_baseline_cache_read = excluded.usage_baseline_cache_read,
+       usage_baseline_cache_write = excluded.usage_baseline_cache_write,
+       limits_max_cost = excluded.limits_max_cost,
+       limits_max_tokens = excluded.limits_max_tokens,
+       limit_exceeded = excluded.limit_exceeded`,
+  )
+  const deleteGoal = db.query("DELETE FROM omo_goals WHERE session_id = ?")
+
+  function rowToGoal(row: GoalRow): Goal | null {
+    // Corrupt active_since: if stored value is not null/number, treat as corrupt
+    if (row.active_since !== null && typeof row.active_since !== "number") {
       return null
     }
+    const activeSince =
+      typeof row.active_since === "number" && Number.isFinite(row.active_since)
+        ? row.active_since
+        : undefined
+    const goal: Goal = {
+      version: 1,
+      sessionID: row.session_id,
+      objective: row.objective,
+      status: row.status as GoalStatus,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      tokensUsed: row.tokens_used,
+      timeUsedSeconds: row.time_used_seconds,
+      activeSince,
+      costUsed: row.cost_used,
+      continuations: row.continuations,
+      continuationPending: row.continuation_pending ? true : false,
+      continuationID: row.continuation_id ?? undefined,
+      usageBaseline:
+        row.usage_baseline_cost !== null
+          ? {
+              cost: row.usage_baseline_cost,
+              tokens: {
+                input: row.usage_baseline_input ?? 0,
+                output: row.usage_baseline_output ?? 0,
+                reasoning: row.usage_baseline_reasoning ?? 0,
+                cache: {
+                  read: row.usage_baseline_cache_read ?? 0,
+                  write: row.usage_baseline_cache_write ?? 0,
+                },
+              },
+            }
+          : undefined,
+      limits:
+        row.limits_max_cost !== null || row.limits_max_tokens !== null
+          ? {
+              ...(row.limits_max_cost !== null ? { maxCost: row.limits_max_cost } : {}),
+              ...(row.limits_max_tokens !== null ? { maxTokens: row.limits_max_tokens } : {}),
+            }
+          : undefined,
+      limitExceeded: row.limit_exceeded ? (row.limit_exceeded as LimitDimension) : undefined,
+    }
+    if (!validateGoalRead(goal)) return null
+    return goal
+  }
+
+  function validateGoalRead(goal: Goal): boolean {
+    if (goal.version !== 1) return false
+    if (typeof goal.objective !== "string") return false
+    if (!["active", "paused", "complete", "cancelled"].includes(goal.status)) return false
+    try {
+      if (validateObjective(goal.objective) !== goal.objective) return false
+    } catch {
+      return false
+    }
+    if (!Number.isFinite(goal.tokensUsed) || goal.tokensUsed < 0) return false
+    if (!Number.isFinite(goal.timeUsedSeconds) || goal.timeUsedSeconds < 0) return false
+    if (!Number.isSafeInteger(goal.continuations)) return false
+    // activeSince must be a valid positive number when status is "active" AND present.
+    // Legacy records may lack activeSince; treat missing as valid for backward compat.
+    if (goal.activeSince !== undefined) {
+      if (goal.status !== "active") return false
+      if (!Number.isFinite(goal.activeSince) || goal.activeSince <= 0) return false
+    }
+    if (goal.continuationPending !== undefined && typeof goal.continuationPending !== "boolean")
+      return false
+    if (goal.usageBaseline !== undefined) {
+      try {
+        validSnapshot(goal.usageBaseline)
+      } catch {
+        return false
+      }
+    }
+    if (goal.limits !== undefined) {
+      try {
+        validateLimits(goal.limits)
+      } catch {
+        return false
+      }
+    }
+    if (
+      goal.limitExceeded !== undefined &&
+      goal.limitExceeded !== null &&
+      !["cost", "tokens"].includes(goal.limitExceeded)
+    )
+      return false
+    if (goal.limitExceeded !== undefined && goal.limitExceeded !== null) {
+      if (breachedLimit(goal) !== goal.limitExceeded) return false
+    }
+    return true
+  }
+
+  const read = (sessionID: string): Goal | null => {
+    const row = getGoal.get(sessionID)
+    if (!row) return null
+    return rowToGoal(row)
   }
 
   function validSnapshot(usage: UsageSnapshot): void {
@@ -241,57 +371,23 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
     }
   }
 
-  const write = (goal: Goal): void => {
-    const target = fileFor(goal.sessionID)
-    const tmp = `${target}.tmp`
-    writeFileSync(tmp, JSON.stringify(goal, null, 2), "utf8")
-    renameSync(tmp, target)
-  }
-
-  const setStatus = (sessionID: string, status: GoalStatus): Goal | null => {
-    const current = read(sessionID)
-    if (!current) return null
-    if (current.status === "cancelled") throw new Error("cancelled goal is terminal")
-    if (status === "active") {
-      // Authorisation gates: `setStatus` refuses to activate a goal that a user
-      // budget already paused, or one whose continuation outcome nobody
-      // confirmed. `set` enforces the same two gates above.
-      if (current.limitExceeded) throw new Error(`limit-exceeded: ${current.limitExceeded}`)
-      if (current.continuationPending) throw new Error("unresolved-continuation")
-    }
-    // Resuming re-arms the continuation budget; pausing and completing keep it.
-    const next = withStatus(current, status, {
-      continuations: status === "active" ? 0 : current.continuations,
-      continuationPending: false,
-      continuationID: undefined,
-    })
-    write(next)
-    return next
-  }
-
-  /**
-   * Move a record to another status and settle the elapsed active interval.
-   * Every status change goes through here, so `timeUsedSeconds` can never be a
-   * field that is declared and displayed but never written.
-   */
   const withStatus = (current: Goal, status: GoalStatus, extra?: Partial<Goal>): Goal => {
-    const now = clock()
+    const clockNow = typeof options.now === "function" ? options.now() : Date.now()
     const leavingActive = current.status === "active" && status !== "active"
     const settled =
       leavingActive && typeof current.activeSince === "number"
-        ? Math.max(0, Math.floor((now - current.activeSince) / 1000))
+        ? Math.max(0, Math.floor((clockNow - current.activeSince) / 1000))
         : 0
     return {
       ...current,
       ...extra,
       status,
-      updatedAt: new Date(now).toISOString(),
+      updatedAt: new Date(clockNow).toISOString(),
       timeUsedSeconds: current.timeUsedSeconds + settled,
-      activeSince: status === "active" ? now : undefined,
+      activeSince: status === "active" ? clockNow : undefined,
     }
   }
 
-  /** Apply a budget after usage changed: pausing is the only automatic stop. */
   const enforce = (goal: Goal): Goal => {
     const exceeded = breachedLimit(goal)
     if (!exceeded || goal.status !== "active") {
@@ -300,16 +396,39 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
     return withStatus(goal, "paused", { limitExceeded: exceeded })
   }
 
+  const saveGoal = (sessionID: string, goal: Goal): void => {
+    upsertGoal.run(
+      goal.sessionID,
+      goal.objective,
+      goal.status,
+      goal.createdAt,
+      goal.updatedAt,
+      goal.tokensUsed,
+      goal.timeUsedSeconds,
+      goal.activeSince ?? null,
+      goal.costUsed,
+      goal.continuations,
+      goal.continuationPending ? 1 : 0,
+      goal.continuationID ?? null,
+      goal.usageBaseline?.cost ?? null,
+      goal.usageBaseline?.tokens.input ?? null,
+      goal.usageBaseline?.tokens.output ?? null,
+      goal.usageBaseline?.tokens.reasoning ?? null,
+      goal.usageBaseline?.tokens.cache.read ?? null,
+      goal.usageBaseline?.tokens.cache.write ?? null,
+      goal.limits?.maxCost ?? null,
+      goal.limits?.maxTokens ?? null,
+      goal.limitExceeded ?? null,
+    )
+  }
+
   return {
     set(sessionID, objective, limits) {
       const trimmed = validateObjective(objective)
       const parsedLimits = validateLimits(limits)
-      const now = clock()
+      const clockNow = typeof options.now === "function" ? options.now() : Date.now()
+      const now = clockNow
       const existing = read(sessionID)
-      // Only `clear` may remove these states: rewriting the objective must not
-      // re-arm a breached budget or resurrect a cancelled goal. Lifetime usage
-      // and its cumulative baseline therefore always survive `set`.
-      // Cancellation is the more fundamental state, so it is reported first.
       if (existing?.status === "cancelled") throw new Error("cancelled goal is terminal")
       if (existing?.limitExceeded) throw new Error(`limit-exceeded: ${existing.limitExceeded}`)
       const goal: Goal = {
@@ -317,45 +436,72 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
         sessionID,
         objective: trimmed,
         status: "active",
-        // The active interval starts now; `withStatus` settles it on the way out.
         activeSince: now,
         createdAt: existing?.createdAt ?? new Date(now).toISOString(),
         updatedAt: new Date(now).toISOString(),
-        // Lifetime counters survive a new objective, so a new budget cannot be
-        // laundered by rewriting the objective text.
         tokensUsed: existing?.tokensUsed ?? 0,
         timeUsedSeconds: existing?.timeUsedSeconds ?? 0,
         costUsed: existing?.costUsed ?? 0,
-        // A new (or replaced) objective re-arms the continuation budget and is
-        // the only way to clear a recorded budget breach.
         continuations: 0,
         continuationPending: false,
         continuationID: undefined,
         limits: parsedLimits,
         limitExceeded: undefined,
-        // The last cumulative report stays the baseline, so usage that happened
-        // under the previous objective is still charged to the new budget.
         usageBaseline: existing?.usageBaseline,
       }
-      // Lifetime counters are kept, so a fresh objective under a budget already
-      // spent must start paused rather than silently re-granting headroom.
       const guarded = enforce(goal)
-      write(guarded)
+      saveGoal(sessionID, guarded)
       return guarded
     },
     get: read,
-    pause: (sessionID) => setStatus(sessionID, "paused"),
-    resume: (sessionID) => setStatus(sessionID, "active"),
-    complete: (sessionID) => setStatus(sessionID, "complete"),
+    pause: (sessionID) => {
+      const current = read(sessionID)
+      if (!current) return null
+      if (current.status === "cancelled") throw new Error("cancelled goal is terminal")
+      // Preserve continuations when pausing due to an unresolved continuation;
+      // only reset on manual pause (user action via update_goal).
+      const next = withStatus(current, "paused", {
+        continuations: current.continuationPending ? current.continuations : 0,
+        continuationPending: false,
+        continuationID: undefined,
+      })
+      saveGoal(sessionID, next)
+      return next
+    },
+    resume: (sessionID) => {
+      const current = read(sessionID)
+      if (!current) return null
+      if (current.status === "cancelled") throw new Error("cancelled goal is terminal")
+      if (current.limitExceeded) throw new Error(`limit-exceeded: ${current.limitExceeded}`)
+      if (current.continuationPending) throw new Error("unresolved-continuation")
+      const next = withStatus(current, "active", {
+        continuations: 0,
+        continuationPending: false,
+        continuationID: undefined,
+      })
+      saveGoal(sessionID, next)
+      return next
+    },
+    complete: (sessionID) => {
+      const current = read(sessionID)
+      if (!current) return null
+      if (current.status === "cancelled") throw new Error("cancelled goal is terminal")
+      const next = withStatus(current, "complete", {
+        continuations: 0,
+        continuationPending: false,
+        continuationID: undefined,
+      })
+      saveGoal(sessionID, next)
+      return next
+    },
     cancel: (sessionID) => {
       const current = read(sessionID)
       if (!current) return null
-      // Cancelling is always permitted, including on an already-cancelled goal.
       const next = withStatus(current, "cancelled", {
         continuationPending: false,
         continuationID: undefined,
       })
-      write(next)
+      saveGoal(sessionID, next)
       return next
     },
     recoverContinuation(sessionID, disposition) {
@@ -363,24 +509,18 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
         throw new Error("invalid-recovery-disposition")
       const current = read(sessionID)
       if (!current) return null
-      // Cancellation is terminal: recovering an abandoned admission must not
-      // reopen it as paused.
       if (current.status === "cancelled") return current
       if (!current.continuationPending) return current
       const next = withStatus(current, disposition === "abandon" ? "paused" : current.status, {
         continuationPending: false,
         continuationID: undefined,
       })
-      write(next)
+      saveGoal(sessionID, next)
       return next
     },
     clear(sessionID) {
-      try {
-        unlinkSync(fileFor(sessionID))
-        return true
-      } catch {
-        return false
-      }
+      const result = deleteGoal.run(sessionID)
+      return (result as { changes: number }).changes > 0
     },
     accrueSnapshot(sessionID, usage) {
       validSnapshot(usage)
@@ -393,19 +533,15 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
         report.tokens.cache.read +
         report.tokens.cache.write
       const baseline = current.usageBaseline
-      // Host reports are cumulative session totals. Without a baseline the first
-      // report is unknown-prior-usage work, so it only becomes the new base.
-      // Any component falling below the base means the host restarted its
-      // accounting: rebase without subtracting lifetime usage.
       const rebase =
         !baseline ||
         usage.cost < baseline.cost ||
         total(usage) < total(baseline) ||
         (["input", "output", "reasoning"] as const).some(
-          (field) => usage.tokens[field] < baseline.tokens[field],
+          (field) => usage.tokens[field] < (baseline.tokens[field] ?? 0),
         ) ||
         (["read", "write"] as const).some(
-          (field) => usage.tokens.cache[field] < baseline.tokens.cache[field],
+          (field) => usage.tokens.cache[field] < (baseline.tokens.cache[field] ?? 0),
         )
       const next: Goal = {
         ...current,
@@ -420,37 +556,36 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
         throw new Error("invalid-usage: aggregate")
       }
       const guarded = enforce(next)
-      write(guarded)
+      saveGoal(sessionID, guarded)
       return guarded
     },
     noteContinuation(sessionID) {
       const current = read(sessionID)
       if (!current) return null
-      // An unresolved admission is never discarded silently: refuse instead of
-      // overwriting the reservation. Cancelled and completed goals never run.
       if (current.continuationPending) throw new Error("unresolved-continuation")
       if (current.status !== "active") return null
+      const clockNow = typeof options.now === "function" ? options.now() : Date.now()
       const next: Goal = {
         ...current,
-        updatedAt: new Date().toISOString(),
+        updatedAt: new Date(clockNow).toISOString(),
         continuations: current.continuations + 1,
         continuationPending: true,
         continuationID: randomUUID(),
       }
-      write(next)
+      saveGoal(sessionID, next)
       return next
     },
     finishContinuation(sessionID, admissionID, failed = false) {
       const current = read(sessionID)
       if (!current) return null
       if (current.continuationID !== admissionID) return current
-      // A failed admission pauses the goal, never a cancelled one.
+      const clockNow = typeof options.now === "function" ? options.now() : Date.now()
       const next = withStatus(
         current,
         failed && current.status !== "cancelled" ? "paused" : current.status,
         { continuationPending: false, continuationID: undefined },
       )
-      write(next)
+      saveGoal(sessionID, next)
       return next
     },
   }

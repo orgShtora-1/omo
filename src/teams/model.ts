@@ -1,3 +1,5 @@
+import { type ErrorCode, OmoError } from "../errors/base.js"
+
 export type TeamScope = { projectID: string; locationID: string; parentSessionID: string }
 export type TeamInput = {
   id: string
@@ -25,13 +27,10 @@ export type Team = {
   status: "active" | "shutdown_requested"
   shutdownRequestedBy?: string
 }
-export class TeamError extends Error {
-  constructor(
-    public readonly code: string,
-    detail: string,
-  ) {
-    super(`${code}: ${detail}`)
-    this.name = "TeamError"
+
+export class TeamError extends OmoError {
+  constructor(code: ErrorCode, detail: string) {
+    super(code, `${code}: ${detail}`)
   }
 }
 export function nonempty(value: unknown, label: string): asserts value is string {

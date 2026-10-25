@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { type ErrorCode, OmoError } from "../errors/base.js"
 
 export interface LspServerConfig {
   command: string
@@ -20,13 +21,12 @@ export interface Diagnostic {
   severity?: number
   [key: string]: unknown
 }
-export class LspError extends Error {
+export class LspError extends OmoError {
   constructor(
-    readonly code: "configuration" | "timeout" | "crash" | "protocol" | "disposed" | "cancelled",
+    code: "configuration" | "timeout" | "crash" | "protocol" | "disposed" | "cancelled",
     message: string,
   ) {
-    super(message)
-    this.name = "LspError"
+    super(code, message)
   }
 }
 

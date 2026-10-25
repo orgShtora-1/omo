@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test"
-import { createHash } from "node:crypto"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -64,25 +63,18 @@ test("boulder keeps records in the state home and plan documents in the project 
     const store = openBoulderStore(stateHome, { projectRoot })
     const work = store.start("s1", "PLAN.md")
     expect(work.plan).toBe("PLAN.md")
-    // The session record lives under the state home, never inside the project.
-    const record = join(
-      stateHome,
-      "boulder",
-      `${createHash("sha256").update("s1").digest("hex")}.json`,
+    // Verify persistence across store reopenings (replaces file-read check).
+    const reopened = openBoulderStore(stateHome, { projectRoot })
+    const reloaded = reopened.get("s1")
+    expect(reloaded).not.toBeNull()
+    expect(reloaded?.plan).toBe("PLAN.md")
+    // Plan document lives in the project root, not the state home.
+    expect(await readFile(join(projectRoot, "PLAN.md"), "utf8").catch(() => null)).toBe(
+      "- [ ] Ship\n",
     )
-    const stored = JSON.parse(await readFile(record, "utf8")) as {
-      works: Array<{ plan: string }>
-    }
-    expect(stored.works).toHaveLength(1)
-    expect(stored.works[0]?.plan).toBe("PLAN.md")
-    expect(
-      await readFile(
-        join(projectRoot, "boulder", `${createHash("sha256").update("s1").digest("hex")}.json`),
-        "utf8",
-      ).catch(() => null),
-    ).toBeNull()
+    expect(await readFile(join(stateHome, "PLAN.md"), "utf8").catch(() => null)).toBeNull()
     // Progress reads the plan document from the project root.
-    expect(store.progress("s1", work.id)?.remaining).toBe(1)
+    expect(reopened.progress("s1", work.id)?.remaining).toBe(1)
   } finally {
     await rm(stateHome, { recursive: true, force: true })
     await rm(projectRoot, { recursive: true, force: true })

@@ -1,9 +1,11 @@
+import { z } from "zod"
 import { profiles as builtinProfiles } from "../agents/prompts"
 import {
   DEFAULT_PREEMPTIVE_COMPACTION,
   type PreemptiveCompactionConfig,
 } from "../context/compaction"
 import type { ModelRef } from "../contracts"
+import { type ErrorCode, OmoError } from "../errors/base.js"
 import { DEFAULT_OS_NOTIFICATIONS, type OsNotificationsConfig } from "../execution/os-notifications"
 import { type McpOptions, parseMcpOptions } from "../mcp/config"
 import { DEFAULT_DREAM_CONFIG, type DreamConfig } from "../memory/dream"
@@ -12,6 +14,11 @@ import {
   fallbackCandidatePermitted,
   type ModelFallbackConfig,
 } from "./model-fallback"
+import {
+  DEFAULT_PROACTIVE_MODEL_FALLBACK,
+  type ProactiveModelFallbackConfig,
+} from "./model-proactive-fallback"
+import { OmoOptionsSchema, SCHEMA_VERSION } from "./zod-schemas.js"
 
 // Opções do plugin @shtora/omo: fonte principal de configuração.
 // parseOptions valida input desconhecido e devolve OmoOptions normalizado;
@@ -19,8 +26,6 @@ import {
 // Decisões: chaves top-level desconhecidas são rejeitadas (compatibilidade
 // futura via bump de schemaVersion, que rejeita versão > 1); categorias são
 // as 5 fixas da spec; category.agent referencia um profile do mesmo documento.
-
-const SCHEMA_VERSION = 1 as const
 
 export const FIXED_CATEGORIES = [
   "investigate",
@@ -38,6 +43,8 @@ export type ProfileConfig = {
   allowWrite: boolean
   model?: ModelRef
   allowedModels?: ModelRef[]
+  /** Enable extended thinking mode for this profile (Anthropic-style thinking budget). */
+  thinkMode?: boolean
 }
 
 export type CategoryConfig = {
@@ -89,6 +96,7 @@ export type ToolGuardsConfig = {
   enabled: boolean
   write: string[]
   read: string[]
+  writeGuard?: { enabled: boolean }
 }
 
 export type OmoOptions = {
@@ -108,6 +116,7 @@ export type OmoOptions = {
   preemptive_compaction: PreemptiveCompactionConfig
   os_notifications: OsNotificationsConfig
   model_fallback: ModelFallbackConfig
+  proactive_model_fallback: ProactiveModelFallbackConfig
   allowedModels?: ModelRef[]
   teams?: Record<string, unknown>
   lsp?: Record<string, unknown>
@@ -117,13 +126,9 @@ export type OmoOptions = {
 
 // Erro tipado de validação. Contrato: `path` é o caminho do campo
 // (ex. "execution.maxChildren", "profiles[1].id", "(root)").
-export class OptionsError extends Error {
-  readonly path: string
-
-  constructor(path: string, message: string) {
-    super(`${path}: ${message}`)
-    this.name = "OptionsError"
-    this.path = path
+export class OptionsError extends OmoError {
+  constructor(path: string, message: string, code: ErrorCode = "invalid-options") {
+    super(code, `${path}: ${message}`, { path })
   }
 }
 
@@ -133,6 +138,22 @@ function fail(path: string, message: string): never {
 
 function isRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === "object" && input !== null && !Array.isArray(input)
+}
+
+function zodErrorToPath(issue: { path: (string | number | symbol)[]; message: string }): string {
+  let path = ""
+  for (const p of issue.path) {
+    if (typeof p === "number" || typeof p === "string") {
+      if (typeof p === "number") {
+        path += `[${p}]`
+      } else if (path === "") {
+        path = p
+      } else {
+        path += `.${p}`
+      }
+    }
+  }
+  return path || "(root)"
 }
 
 function nonEmptyString(value: unknown, path: string): string {
@@ -210,6 +231,9 @@ function parseProfiles(value: unknown): ProfileConfig[] {
       allowWrite: optionalBoolean(entry.allowWrite, `${path}.allowWrite`) ?? false,
       model,
       ...(allowedModels !== undefined ? { allowedModels } : {}),
+      ...(entry.thinkMode !== undefined
+        ? { thinkMode: optionalBoolean(entry.thinkMode, `${path}.thinkMode`) }
+        : {}),
     }
   })
 }
@@ -249,15 +273,20 @@ function optionalNonNegativeInt(value: unknown, path: string): number | undefine
   return value as number
 }
 
-// Limiares das opções novas (compactação preemptiva, notificações OS): além de
-// inteiros positivos, devem ser safe integers — um limiar acima de 2^53 não é
-// representável com segurança e é rejeitado na validação, não silenciosamente.
 function optionalSafePositiveInt(value: unknown, path: string): number | undefined {
   if (value === undefined) return undefined
   if (!Number.isSafeInteger(value) || (value as number) <= 0) {
     fail(path, "esperava inteiro positivo")
   }
   return value as number
+}
+
+function optionalSafePositiveFloat(value: unknown, path: string): number | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1) {
+    fail(path, "esperava float positivo (0..1)")
+  }
+  return value
 }
 
 function optionalLimits(value: unknown, path: string): Record<string, number> | undefined {
@@ -344,9 +373,6 @@ function parseRuntime(value: unknown): RuntimeConfig {
   return { packageManager: value.packageManager as PackageManager }
 }
 
-// Política do gatilho sonho/tempo: campos conhecidos apenas, inteiros
-// positivos, defaults exatos da spec aplicados quando ausentes. Chave
-// desconhecida é rejeitada — uma opção de sonho pela metade não pode existir.
 function parseMemoryDream(value: unknown, path: string): DreamConfig {
   if (value === undefined) return { ...DEFAULT_DREAM_CONFIG }
   if (!isRecord(value)) fail(path, "esperava objeto")
@@ -364,11 +390,6 @@ function parseMemoryDream(value: unknown, path: string): DreamConfig {
   }
 }
 
-// Lista de padrões de nome de tool da guarda: cada entrada é um nome exato
-// ("edit") ou um coringa simples de sufixo ("omo_*"); "*" sozinho casa com
-// todas. "*" em qualquer outra posição, entrada vazia e espaços nas bordas
-// são rejeitados — um padrão que nunca casa é erro de configuração, não um
-// silêncio aceitável.
 function parseToolPatterns(value: unknown, path: string): string[] {
   if (value === undefined) return []
   if (!Array.isArray(value)) fail(path, "esperava array de strings")
@@ -383,25 +404,23 @@ function parseToolPatterns(value: unknown, path: string): string[] {
   })
 }
 
-// Política das guardas de leitura/escrita: campos conhecidos apenas,
-// `enabled` booleano (default desligado) e listas validadas padrão a padrão.
-// Chave desconhecida é rejeitada — uma guarda pela metade não pode existir.
 function parseToolGuards(value: unknown, path: string): ToolGuardsConfig {
   if (value === undefined) return { enabled: false, write: [], read: [] }
   if (!isRecord(value)) fail(path, "esperava objeto")
   for (const key of Object.keys(value))
-    if (!["enabled", "write", "read"].includes(key)) fail(`${path}.${key}`, "campo desconhecido")
+    if (!["enabled", "write", "read", "writeGuard"].includes(key))
+      fail(`${path}.${key}`, "campo desconhecido")
+  const writeGuard = isRecord(value.writeGuard)
+    ? { enabled: optionalBoolean(value.writeGuard.enabled, `${path}.writeGuard.enabled`) ?? false }
+    : undefined
   return {
     enabled: optionalBoolean(value.enabled, `${path}.enabled`) ?? false,
     write: parseToolPatterns(value.write, `${path}.write`),
     read: parseToolPatterns(value.read, `${path}.read`),
+    writeGuard,
   }
 }
 
-// Política da compactação preemptiva (opção `preemptive_compaction`): o hook
-// de contexto existente mede o contexto construído e pede ao host no máximo uma
-// compactação por janela de cooldown, com guarda pura por sessão. Campos
-// conhecidos apenas; default desligado.
 function parsePreemptiveCompaction(value: unknown, path: string): PreemptiveCompactionConfig {
   if (value === undefined) return { ...DEFAULT_PREEMPTIVE_COMPACTION }
   if (!isRecord(value)) fail(path, "esperava objeto")
@@ -419,9 +438,6 @@ function parsePreemptiveCompaction(value: unknown, path: string): PreemptiveComp
   }
 }
 
-// Política das notificações OS (opção `os_notifications`): espelha no sistema
-// operacional os mesmos eventos de execução que o notifier in-app publica.
-// Campos conhecidos apenas; default desligado.
 function parseOsNotifications(value: unknown, path: string): OsNotificationsConfig {
   if (value === undefined) return { ...DEFAULT_OS_NOTIFICATIONS }
   if (!isRecord(value)) fail(path, "esperava objeto")
@@ -435,10 +451,23 @@ function parseOsNotifications(value: unknown, path: string): OsNotificationsConf
   }
 }
 
-// Política do fallback reativo de modelo (opção `model_fallback`): cadeias
-// ordenadas por perfil aplicadas no hook público `session.hook("retry")`,
-// sempre dentro das allowlists que o hook `model.request` já aplica. Campos
-// conhecidos apenas; default desligado (sem hook algum registrado).
+function parseProactiveModelFallback(value: unknown, path: string): ProactiveModelFallbackConfig {
+  if (value === undefined) return { ...DEFAULT_PROACTIVE_MODEL_FALLBACK }
+  if (!isRecord(value)) fail(path, "esperava objeto")
+  for (const key of Object.keys(value))
+    if (!["enabled", "triggerPct", "cooldownMs"].includes(key))
+      fail(`${path}.${key}`, "campo desconhecido")
+  return {
+    enabled: optionalBoolean(value.enabled, `${path}.enabled`) ?? false,
+    triggerPct:
+      optionalSafePositiveFloat(value.triggerPct, `${path}.triggerPct`) ??
+      DEFAULT_PROACTIVE_MODEL_FALLBACK.triggerPct,
+    cooldownMs:
+      optionalSafePositiveInt(value.cooldownMs, `${path}.cooldownMs`) ??
+      DEFAULT_PROACTIVE_MODEL_FALLBACK.cooldownMs,
+  }
+}
+
 function parseModelFallback(
   value: unknown,
   path: string,
@@ -466,8 +495,6 @@ function parseModelFallback(
       for (const [index, model] of parsed.entries()) {
         if (parsed.slice(0, index).some((seen) => sameModel(seen, model)))
           fail(`${at}[${index}]`, "modelo duplicado na cadeia de fallback")
-        // Fail-closed no carregamento: uma cadeia fora das allowlists é erro
-        // de configuração, não um candidato a pular em silêncio no runtime.
         if (!fallbackCandidatePermitted({ allowedModels, profiles }, id, model))
           fail(`${at}[${index}]`, "modelo não permitido por allowedModels")
       }
@@ -505,6 +532,7 @@ const KNOWN_TOP_LEVEL = new Set([
   "preemptive_compaction",
   "os_notifications",
   "model_fallback",
+  "proactive_model_fallback",
   "teams",
   "lsp",
   "terminal",
@@ -515,10 +543,25 @@ const KNOWN_TOP_LEVEL = new Set([
 ])
 
 export function parseOptions(input: unknown): OmoOptions {
+  // Use Zod for initial structural validation
+  const zodResult = OmoOptionsSchema.safeParse(input)
+  if (!zodResult.success) {
+    const firstIssue = zodResult.error.issues[0]
+    if (firstIssue) {
+      const path = zodErrorToPath(firstIssue)
+      throw new OptionsError(path, firstIssue.message)
+    }
+  }
+
+  // Check root is an object
   if (!isRecord(input)) fail("(root)", "esperava objeto de opções")
+
+  // Check for unknown top-level keys
   for (const key of Object.keys(input)) {
     if (!KNOWN_TOP_LEVEL.has(key)) fail(key, "campo desconhecido")
   }
+
+  // Validate schemaVersion with custom message
   if (input.schemaVersion === undefined) fail("schemaVersion", "campo obrigatório")
   if (input.schemaVersion !== SCHEMA_VERSION) {
     fail(
@@ -528,7 +571,11 @@ export function parseOptions(input: unknown): OmoOptions {
         : `esperava schemaVersion ${SCHEMA_VERSION}`,
     )
   }
+
+  // Parse each section using the manual validators (which preserve exact error messages)
   const profiles = parseProfiles(input.profiles)
+
+  // Process agents section
   if (input.agents !== undefined) {
     if (!isRecord(input.agents)) fail("agents", "esperava objeto por ID de agente")
     for (const [id, entry] of Object.entries(input.agents)) {
@@ -537,7 +584,7 @@ export function parseOptions(input: unknown): OmoOptions {
       if (!builtin) fail(path, "agente desconhecido; use profiles para perfis customizados")
       if (!isRecord(entry)) fail(path, "esperava objeto")
       for (const key of Object.keys(entry))
-        if (!["mode", "allowWrite", "model", "allowedModels"].includes(key))
+        if (!["mode", "allowWrite", "model", "allowedModels", "thinkMode"].includes(key))
           fail(`${path}.${key}`, "campo desconhecido")
       if (profiles.some((p) => p.id === id))
         fail(path, "não configure o mesmo ID em agents e profiles")
@@ -553,9 +600,14 @@ export function parseOptions(input: unknown): OmoOptions {
         allowWrite: optionalBoolean(entry.allowWrite, `${path}.allowWrite`) ?? builtin.write,
         model,
         ...(allowedModels !== undefined ? { allowedModels } : {}),
+        ...(entry.thinkMode !== undefined
+          ? { thinkMode: optionalBoolean(entry.thinkMode, `${path}.thinkMode`) }
+          : {}),
       })
     }
   }
+
+  // Validate allowedModels
   let allowedModels: ModelRef[] | undefined
   if (input.allowedModels !== undefined) {
     if (!Array.isArray(input.allowedModels)) fail("allowedModels", "esperava array de modelos")
@@ -569,6 +621,8 @@ export function parseOptions(input: unknown): OmoOptions {
         fail(`profiles[${index}].model`, "modelo não permitido por allowedModels")
     }
   }
+
+  // Validate categories
   const profileIDs = new Set([...builtinProfiles.map((p) => p.id), ...profiles.map((p) => p.id)])
   const categories = parseCategories(input.categories, profileIDs)
   for (const [index, category] of categories.entries()) {
@@ -584,6 +638,8 @@ export function parseOptions(input: unknown): OmoOptions {
       if (wanted && !allowedModels.some((model) => sameModel(model, wanted)))
         fail(`categories[${index}].model`, "modelo não permitido por allowedModels")
     }
+
+  // Parse remaining sections
   const model_fallback = parseModelFallback(
     input.model_fallback,
     "model_fallback",
@@ -591,6 +647,7 @@ export function parseOptions(input: unknown): OmoOptions {
     allowedModels,
     profiles,
   )
+
   return {
     schemaVersion: SCHEMA_VERSION,
     profiles,
@@ -613,6 +670,10 @@ export function parseOptions(input: unknown): OmoOptions {
     ),
     os_notifications: parseOsNotifications(input.os_notifications, "os_notifications"),
     model_fallback,
+    proactive_model_fallback: parseProactiveModelFallback(
+      input.proactive_model_fallback,
+      "proactive_model_fallback",
+    ),
     teams: optionalSection(input.teams, "teams"),
     lsp: optionalSection(input.lsp, "lsp"),
     terminal: optionalSection(input.terminal, "terminal"),

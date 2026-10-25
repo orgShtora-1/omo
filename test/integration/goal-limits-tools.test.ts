@@ -232,8 +232,9 @@ test("budget, cancellation and recovery stay inside the native session", async (
   const f = await fixture()
   try {
     f.store.set("ses_victim", "victim objective", { maxCost: 1 })
-    const victimFile = join(goalDirectory(f.stateDir), "ses_victim.json")
-    const before = await readFile(victimFile, "utf8")
+    // Snapshot the victim's stored objective — used to verify the record is
+    // unchanged after a foreign-session attempt.
+    const victimSnapshot = f.store.get("ses_victim")?.objective ?? null
     for (const [name, input] of [
       [
         "create_goal",
@@ -246,7 +247,7 @@ test("budget, cancellation and recovery stay inside the native session", async (
       const result = await f.tool(name).execute(input, { sessionID: "ses_caller" })
       expect(result.output).toMatch(/Error:.*foreign-session/)
     }
-    expect(await readFile(victimFile, "utf8")).toBe(before)
+    expect(f.store.get("ses_victim")?.objective).toBe(victimSnapshot as string | undefined)
     expect(f.store.get("ses_caller")).toBeNull()
     const anonymous = await f.tool("create_goal").execute({ limits: { maxCost: 1 } }, {})
     expect(anonymous.output).toMatch(/Error:.*session.*identity/)

@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, realpathSync } from "node:fs"
 import { join } from "node:path"
+import { type ErrorCode, OmoError } from "../errors/base.js"
 import { ProcessError, runBounded } from "../subprocess.js"
 import { type IntegrationResult, type IntegrationReview, mergeReviewedCommit } from "./integration"
 
@@ -31,13 +32,9 @@ export interface WorktreeManager {
   abortIntegration(handle: WorktreeHandle): Promise<void>
   close(): void
 }
-export class WorktreeError extends Error {
-  constructor(
-    public readonly code: string,
-    detail: string,
-  ) {
-    super(`${code}: ${detail}`)
-    this.name = "WorktreeError"
+export class WorktreeError extends OmoError {
+  constructor(code: ErrorCode, detail: string) {
+    super(code, `${code}: ${detail}`)
   }
 }
 export type GitResult = { exit: number; stdout: string; stderr: string }

@@ -28,7 +28,7 @@ import { transition } from "./plans/transitions"
 import { verifyStep } from "./plans/verification"
 import { acquireProjectLock } from "./runtime/lock"
 import { fetchSkillAudits } from "./skills/audits"
-import { readAgentsCatalog } from "./skills/catalog"
+import { type FilesystemSkill, readAgentsCatalog } from "./skills/catalog"
 import { ensureSkillCoverage } from "./skills/ensure"
 import { installSkill } from "./skills/installer"
 import { type HostSkillEntry, mergeCatalogs } from "./skills/merge"
@@ -339,10 +339,10 @@ export async function mountRuntime(
     // `.agents/skills`, but disk frontmatter can carry richer descriptions for
     // scoring. Missing directory or read failure skips FS, never delegation.
     const projectDir = (ctx.location as { directory?: unknown } | undefined)?.directory
-    let fsSkills: ReturnType<typeof readAgentsCatalog> = []
+    let fsSkills: FilesystemSkill[] = []
     if (typeof projectDir === "string" && projectDir !== "") {
       try {
-        fsSkills = readAgentsCatalog(projectDir)
+        fsSkills = await readAgentsCatalog(projectDir)
       } catch {
         fsSkills = []
       }

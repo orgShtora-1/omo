@@ -128,10 +128,37 @@ export function openMemoryStore(path: string): MemoryStore {
     scope TEXT NOT NULL, key TEXT NOT NULL, revision INTEGER NOT NULL,
     content TEXT NOT NULL, content_hash TEXT NOT NULL, tags TEXT NOT NULL,
     updated_at INTEGER NOT NULL, PRIMARY KEY (scope, key))`)
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_omo_memory_scope_updated ON omo_memory(scope, updated_at DESC)",
+  )
+  db.run("CREATE INDEX IF NOT EXISTS idx_omo_memory_scope_key ON omo_memory(scope, key)")
   db.run(`CREATE TABLE IF NOT EXISTS omo_memory_history (
     scope TEXT NOT NULL, key TEXT NOT NULL, revision INTEGER NOT NULL,
     content TEXT NOT NULL, content_hash TEXT NOT NULL, saved_at INTEGER NOT NULL,
     PRIMARY KEY (scope, key, revision))`)
+
+  // FTS5 full-text search table with external content sync
+  try {
+    db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS omo_memory_fts USING fts5(
+      content,
+      key,
+      tags,
+      content='omo_memory',
+      content_rowid='rowid'
+    )`)
+    db.run(`CREATE TRIGGER IF NOT EXISTS omo_memory_ai AFTER INSERT ON omo_memory BEGIN
+      INSERT INTO omo_memory_fts(rowid, content, key, tags) VALUES (new.rowid, new.content, new.key, new.tags);
+    END`)
+    db.run(`CREATE TRIGGER IF NOT EXISTS omo_memory_ad AFTER DELETE ON omo_memory BEGIN
+      INSERT INTO omo_memory_fts(omo_memory_fts, rowid, content, key, tags) VALUES('delete', old.rowid, old.content, old.key, old.tags);
+    END`)
+    db.run(`CREATE TRIGGER IF NOT EXISTS omo_memory_au AFTER UPDATE ON omo_memory BEGIN
+      INSERT INTO omo_memory_fts(omo_memory_fts, rowid, content, key, tags) VALUES('delete', old.rowid, old.content, old.key, old.tags);
+      INSERT INTO omo_memory_fts(rowid, content, key, tags) VALUES (new.rowid, new.content, new.key, new.tags);
+    END`)
+  } catch {
+    // FTS5 might not be enabled in all SQLite builds; fall back gracefully
+  }
 
   const get = db.query<Row, [string, string]>(
     "SELECT key, revision, content, content_hash, tags, updated_at FROM omo_memory WHERE scope = ? AND key = ?",
@@ -224,8 +251,26 @@ export function openMemoryStore(path: string): MemoryStore {
         throw new Error("memory recall: query must be a non-empty string")
       const bounded = Math.min(20, Math.max(1, Math.trunc(limit)))
       const tokens = tokenize(query)
+      if (tokens.length === 0) return []
+
+      // Try FTS5 pre-filter first
+      let rowsToScore: Row[] = []
+      try {
+        const ftsQuery = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ")
+        const ftsStmt = db.query<Row, [string, string]>(
+          `SELECT m.key, m.revision, m.content, m.content_hash, m.tags, m.updated_at 
+           FROM omo_memory m 
+           JOIN omo_memory_fts f ON m.rowid = f.rowid 
+           WHERE m.scope = ? AND omo_memory_fts MATCH ?`,
+        )
+        rowsToScore = ftsStmt.all(scope, ftsQuery)
+      } catch {
+        // Fall back to scanning all rows in scope if FTS5 fails/not available
+        rowsToScore = listScope.all(scope)
+      }
+
       const scored: RecallItem[] = []
-      for (const row of listScope.all(scope)) {
+      for (const row of rowsToScore) {
         const content = row.content.toLowerCase()
         const key = row.key.toLowerCase()
         const tags = parseTags(row.tags)

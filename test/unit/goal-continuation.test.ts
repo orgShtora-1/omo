@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -9,6 +10,10 @@ function tempStore(): { dir: string; store: GoalStore; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "omo-goal-cont-"))
   const store = openGoalStore(dir)
   return { dir, store, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
+function dbPath(dir: string) {
+  return join(dir, "goal.db")
 }
 
 const usageTokens = { input: 100, output: 50, reasoning: 10, cache: { read: 0, write: 0 } }
@@ -53,20 +58,13 @@ test("legacy goal records without usage counters read with zero defaults", () =>
   const { dir, store, cleanup } = tempStore()
   try {
     const now = new Date().toISOString()
-    writeFileSync(
-      join(dir, `${encodeURIComponent("legacy")}.json`),
-      JSON.stringify({
-        version: 1,
-        sessionID: "legacy",
-        objective: "Old objective",
-        status: "active",
-        createdAt: now,
-        updatedAt: now,
-        tokensUsed: 5,
-        timeUsedSeconds: 0,
-      }),
-      "utf8",
+    const db = new Database(dbPath(dir))
+    db.run(
+      `INSERT INTO omo_goals (session_id, objective, status, created_at, updated_at, tokens_used, time_used_seconds, cost_used, continuations)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["legacy", "Old objective", "active", now, now, 5, 0, 0, 0],
     )
+    db.close()
     const goal = store.get("legacy")
     expect(goal?.tokensUsed).toBe(5)
     expect(goal?.costUsed).toBe(0)

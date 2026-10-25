@@ -1,9 +1,11 @@
+import { Database } from "bun:sqlite"
 import { createHash, randomUUID } from "node:crypto"
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import { type PlanProgress, planProgress } from "./progress"
 
 export type WorkStatus = "active" | "paused" | "completed" | "abandoned"
+
 interface BoulderWork {
   version: 1
   id: string
@@ -70,8 +72,8 @@ const DEFAULT_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * Own session-local work state; never reads another session's work implicitly.
- * Session records confine to the state home (`<stateHome>/boulder`), while
- * plan documents resolve and confine against `options.projectRoot` (the
+ * Session records confine to the SQLite database at `<stateHome>/boulder/boulder.db`,
+ * while plan documents resolve and confine against `options.projectRoot` (the
  * project) and fall back to the state home when absent.
  */
 export function openBoulderStore(stateHome: string, options?: BoulderOptions): BoulderStore {
@@ -79,11 +81,79 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
   // A plan is a project document, not plugin state: records stay in the state
   // home while works keep pointing at files in the project.
   const planRoot = options?.projectRoot ? realpathSync(options.projectRoot) : root
-  const directory = join(root, "boulder")
   const clock = options?.now ?? Date.now
   const staleAfterMs = options?.staleAfterMs ?? DEFAULT_STALE_AFTER_MS
   if (!Number.isSafeInteger(staleAfterMs) || staleAfterMs < 1)
     throw new Error("invalid-stale-window")
+
+  const dbDir = join(root, "boulder")
+  mkdirSync(dbDir, { recursive: true })
+  const dbPath = join(dbDir, "boulder.db")
+  const db = new Database(dbPath)
+  db.run("PRAGMA busy_timeout = 5000")
+  db.run("PRAGMA journal_mode = WAL")
+
+  db.run(`CREATE TABLE IF NOT EXISTS omo_boulder_works (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    plan TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    stale INTEGER NOT NULL DEFAULT 0,
+    handed_off_from TEXT
+  )`)
+
+  db.run(`CREATE TABLE IF NOT EXISTS omo_boulder_invitations (
+    session_id TEXT NOT NULL,
+    from_session_id TEXT NOT NULL,
+    work_id TEXT NOT NULL,
+    at TEXT NOT NULL,
+    state TEXT NOT NULL,
+    PRIMARY KEY (session_id, from_session_id)
+  )`)
+
+  type WorkRow = {
+    id: string
+    session_id: string
+    plan: string
+    status: string
+    created_at: string
+    updated_at: string
+    stale: number
+    handed_off_from: string | null
+  }
+  type InvitationRow = {
+    session_id: string
+    from_session_id: string
+    work_id: string
+    at: string
+    state: string
+  }
+
+  const insertWork = db.query(
+    "INSERT INTO omo_boulder_works (id, session_id, plan, status, created_at, updated_at, stale, handed_off_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  )
+  const updateWork = db.query(
+    "UPDATE omo_boulder_works SET status = ?, updated_at = ?, stale = ?, handed_off_from = ? WHERE id = ? AND session_id = ?",
+  )
+  const deleteWork = db.query("DELETE FROM omo_boulder_works WHERE id = ? AND session_id = ?")
+  const getSessionWorks = db.query<WorkRow, [string]>(
+    "SELECT id, session_id, plan, status, created_at, updated_at, stale, handed_off_from FROM omo_boulder_works WHERE session_id = ?",
+  )
+  const getSessionInvitations = db.query<InvitationRow, [string]>(
+    "SELECT work_id, from_session_id, at, state FROM omo_boulder_invitations WHERE session_id = ?",
+  )
+  const getWork = db.query<WorkRow, [string, string]>(
+    "SELECT id, session_id, plan, status, created_at, updated_at, stale, handed_off_from FROM omo_boulder_works WHERE session_id = ? AND id = ?",
+  )
+  const getInvitation = db.query<InvitationRow, [string, string]>(
+    "SELECT work_id, from_session_id, at, state FROM omo_boulder_invitations WHERE session_id = ? AND from_session_id = ?",
+  )
+  const upsertInvitation = db.query(
+    "INSERT INTO omo_boulder_invitations (session_id, from_session_id, work_id, at, state) VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, from_session_id) DO UPDATE SET state = excluded.state, at = excluded.at",
+  )
+
   function confined(path: string, anchor: string): string {
     const actual = realpathSync(path)
     const rel = relative(anchor, actual)
@@ -92,49 +162,47 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
     }
     return actual
   }
-  function file(sessionID: string): string {
-    if (!sessionID.trim()) throw new Error("native-session-required")
-    return join(directory, `${createHash("sha256").update(sessionID).digest("hex")}.json`)
-  }
+
   function plan(path: string): { path: string; text: string } {
     const actual = confined(resolve(planRoot, path), planRoot)
     return { path: relative(planRoot, actual), text: readFileSync(actual, "utf8") }
   }
-  function read(sessionID: string): SessionRecord | null {
-    const destination = file(sessionID)
-    let text: string
-    try {
-      text = readFileSync(confined(destination, root), "utf8")
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
-      throw error
+
+  function rowToWork(row: WorkRow): BoulderWork {
+    if (!statuses.includes(row.status as WorkStatus)) {
+      throw new Error("invalid-work-state")
     }
-    return decode(text)
+    return {
+      version: 1,
+      id: row.id,
+      sessionID: row.session_id,
+      plan: row.plan,
+      status: row.status as WorkStatus,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      stale: row.stale ? true : undefined,
+      handedOffFrom: row.handed_off_from ?? undefined,
+    }
   }
-  function write(sessionID: string, record: SessionRecord): SessionRecord {
-    mkdirSync(directory, { recursive: true })
-    confined(directory, root)
-    const destination = file(sessionID)
-    const temporary = `${destination}.${randomUUID()}.tmp`
-    writeFileSync(temporary, JSON.stringify(record), {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
-    })
-    renameSync(temporary, destination)
-    return record
+
+  function rowToInvitation(row: InvitationRow): HandoffInvitation {
+    if (row.state !== "offered" && row.state !== "claimed") {
+      throw new Error("invalid-work-state")
+    }
+    return {
+      workID: row.work_id,
+      fromSessionID: row.from_session_id,
+      at: row.at,
+      state: row.state,
+    }
   }
-  function withWorks(
-    sessionID: string,
-    change: (record: SessionRecord) => SessionRecord,
-  ): SessionRecord {
-    const current = read(sessionID) ?? { version: 2, works: [], invitations: [] }
-    return write(sessionID, change(current))
+
+  function own(sessionID: string): SessionRecord {
+    const works = getSessionWorks.all(sessionID).map(rowToWork)
+    const invitations = getSessionInvitations.all(sessionID).map(rowToInvitation)
+    return { version: 2, works, invitations }
   }
-  function own(record: SessionRecord | null): SessionRecord {
-    if (!record) throw new Error("invalid-work-state")
-    return record
-  }
+
   function selected(record: SessionRecord, workID?: string): BoulderWork | null {
     if (workID !== undefined) {
       if (!workID.trim()) throw new Error("work-id-required")
@@ -144,15 +212,33 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
     const pool = unfinished.length > 0 ? unfinished : record.works
     return pool[pool.length - 1] ?? null
   }
+
   function stale(work: BoulderWork, liveSessions: readonly string[]): boolean {
     if (terminal(work.status) || liveSessions.includes(work.sessionID)) return false
     const updated = Date.parse(work.updatedAt)
     if (!Number.isFinite(updated)) throw new Error("invalid-work-state")
     return clock() - updated >= staleAfterMs
   }
+
+  function transaction<T>(fn: () => T): T {
+    db.run("BEGIN")
+    try {
+      const result = fn()
+      db.run("COMMIT")
+      return result
+    } catch (error) {
+      try {
+        db.run("ROLLBACK")
+      } catch {
+        // ignore rollback errors
+      }
+      throw error
+    }
+  }
+
   return {
     start(sessionID, path) {
-      file(sessionID)
+      if (!sessionID.trim()) throw new Error("native-session-required")
       const selected = plan(path)
       const now = new Date(clock()).toISOString()
       const work: BoulderWork = {
@@ -164,93 +250,118 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
         createdAt: now,
         updatedAt: now,
       }
-      withWorks(sessionID, (record) => ({ ...record, works: [...record.works, work] }))
+      insertWork.run(
+        work.id,
+        work.sessionID,
+        work.plan,
+        work.status,
+        work.createdAt,
+        work.updatedAt,
+        0,
+        null,
+      )
       return work
     },
     get(sessionID, workID) {
-      const record = read(sessionID)
-      return record ? selected(record, workID) : null
+      if (!sessionID.trim()) throw new Error("native-session-required")
+      const record = own(sessionID)
+      return selected(record, workID)
     },
     list(sessionID) {
-      return read(sessionID)?.works ?? []
+      if (!sessionID.trim()) throw new Error("native-session-required")
+      return getSessionWorks.all(sessionID).map(rowToWork)
     },
     transition(sessionID, status, workID) {
       if (!statuses.includes(status)) throw new Error("invalid-work-status")
-      const current = read(sessionID)
-      const work = current ? selected(current, workID) : null
+      if (!sessionID.trim()) throw new Error("native-session-required")
+      const record = own(sessionID)
+      const work = selected(record, workID)
       if (!work) return null
       if (terminal(work.status) && status !== work.status) throw new Error("terminal-work")
-      // The sweep marker is deliberately preserved here: only an explicit
-      // `recover` clears it, so a stale work never hides from recovery.
+      const now = new Date(clock()).toISOString()
       const changed: BoulderWork = {
         ...work,
         status,
-        updatedAt: new Date(clock()).toISOString(),
+        updatedAt: now,
       }
-      withWorks(sessionID, (record) => ({
-        ...record,
-        works: record.works.map((item) => (item.id === work.id ? changed : item)),
-      }))
+      updateWork.run(
+        changed.status,
+        changed.updatedAt,
+        changed.stale ? 1 : 0,
+        changed.handedOffFrom ?? null,
+        changed.id,
+        changed.sessionID,
+      )
       return changed
     },
     progress(sessionID, workID) {
-      const record = read(sessionID)
+      if (!sessionID.trim()) throw new Error("native-session-required")
+      const record = own(sessionID)
       const work = record ? selected(record, workID) : null
       return work ? planProgress(plan(work.plan).text) : null
     },
     touch(sessionID, workID) {
-      const current = read(sessionID)
-      const work = current ? selected(current, workID) : null
+      if (!sessionID.trim()) throw new Error("native-session-required")
+      const record = own(sessionID)
+      const work = record ? selected(record, workID) : null
       if (!work || terminal(work.status)) return null
-      const touched: BoulderWork = { ...work, updatedAt: new Date(clock()).toISOString() }
-      withWorks(sessionID, (record) => ({
-        ...record,
-        works: record.works.map((item) => (item.id === work.id ? touched : item)),
-      }))
+      const now = new Date(clock()).toISOString()
+      const touched: BoulderWork = { ...work, updatedAt: now }
+      updateWork.run(
+        touched.status,
+        touched.updatedAt,
+        touched.stale ? 1 : 0,
+        touched.handedOffFrom ?? null,
+        touched.id,
+        touched.sessionID,
+      )
       return touched
     },
     offer(sessionID, workID, toSessionID) {
+      if (!sessionID.trim()) throw new Error("native-session-required")
       if (!toSessionID.trim()) throw new Error("native-session-required")
       if (toSessionID === sessionID) throw new Error("self-handoff")
-      const record = own(read(sessionID))
+      const record = own(sessionID)
       const work = record.works.find((item) => item.id === workID)
       if (!work) throw new Error("unknown-work")
       if (terminal(work.status)) throw new Error("terminal-work")
-      // The invitation is stored in the recipient's own record: offering never
-      // grants the recipient access, it only leaves them something to accept.
       const invitation: HandoffInvitation = {
         workID: work.id,
         fromSessionID: sessionID,
         at: new Date(clock()).toISOString(),
         state: "offered",
       }
-      withWorks(toSessionID, (current) => {
-        const previous = current.invitations.find((item) => item.workID === work.id)
-        if (previous?.state === "claimed") throw new Error("handoff-claimed")
-        return {
-          ...current,
-          invitations: [
-            ...current.invitations.filter((item) => item.workID !== work.id),
-            invitation,
-          ],
-        }
+      transaction(() => {
+        // The invitation is stored in the recipient's own record: offering never
+        // grants the recipient access, it only leaves them something to accept.
+        const currentInvitations = getSessionInvitations.all(toSessionID).map(rowToInvitation)
+        const existing = currentInvitations.find((item) => item.workID === workID)
+        if (existing?.state === "claimed") throw new Error("handoff-claimed")
+        upsertInvitation.run(
+          toSessionID,
+          invitation.fromSessionID,
+          invitation.workID,
+          invitation.at,
+          invitation.state,
+        )
       })
       return invitation
     },
     invitations(sessionID) {
-      file(sessionID)
-      return read(sessionID)?.invitations ?? []
+      if (!sessionID.trim()) throw new Error("native-session-required")
+      return getSessionInvitations.all(sessionID).map(rowToInvitation)
     },
     claim(sessionID, workID) {
+      if (!sessionID.trim()) throw new Error("native-session-required")
       if (!workID.trim()) throw new Error("work-id-required")
-      const record = read(sessionID)
+      const record = own(sessionID)
       // A session without invitations has nothing to claim.
       if (!record) throw new Error("no-handoff")
       const invitation = record.invitations.find((item) => item.workID === workID)
       if (!invitation) throw new Error("no-handoff")
       if (invitation.state === "claimed") throw new Error("handoff-claimed")
       if (record.works.some((item) => item.id === workID)) throw new Error("duplicate-work")
-      const source = own(read(invitation.fromSessionID))
+      const source = own(invitation.fromSessionID)
       const work = source.works.find((item) => item.id === workID)
       if (!work) throw new Error("unknown-work")
       // Re-resolve the plan inside this project: an invitation never widens scope.
@@ -266,31 +377,39 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
         handedOffFrom: invitation.fromSessionID,
         updatedAt: new Date(clock()).toISOString(),
       }
-      withWorks(sessionID, (current) => ({
-        ...current,
-        works: [...current.works, claimed],
-        invitations: current.invitations.map((item) =>
-          item.workID === workID ? { ...item, state: "claimed" } : item,
-        ),
-      }))
       try {
-        // The work leaves the offerer's record: two owners could otherwise
-        // transition and sweep the same id independently.
-        withWorks(invitation.fromSessionID, (current) => ({
-          ...current,
-          works: current.works.filter((item) => item.id !== workID),
-        }))
+        transaction(() => {
+          // Remove from offerer first so the INSERT for the claimer does not
+          // collide on the PRIMARY KEY (work.id is globally unique).
+          deleteWork.run(workID, invitation.fromSessionID)
+          // Add to claimer's works
+          insertWork.run(
+            claimed.id,
+            claimed.sessionID,
+            claimed.plan,
+            claimed.status,
+            claimed.createdAt,
+            claimed.updatedAt,
+            0,
+            claimed.handedOffFrom ?? null,
+          )
+          // Mark invitation as claimed
+          upsertInvitation.run(
+            sessionID,
+            invitation.fromSessionID,
+            invitation.workID,
+            invitation.at,
+            "claimed",
+          )
+        })
       } catch (error) {
         // Undo the claim so the handoff stays retryable instead of leaving the
         // work owned twice or lost.
         try {
-          withWorks(sessionID, (current) => ({
-            ...current,
-            works: current.works.filter((item) => item.id !== workID),
-            invitations: current.invitations.map((item) =>
-              item.workID === workID ? { ...item, state: "offered" } : item,
-            ),
-          }))
+          const delResult = deleteWork.run(workID, sessionID)
+          if ((delResult as { changes: number }).changes > 0) {
+            upsertInvitation.run(sessionID, invitation.fromSessionID, invitation.workID, "offered")
+          }
         } catch {
           // The rollback failure is reported through the original error only.
         }
@@ -299,38 +418,55 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
       return claimed
     },
     sweep(sessionID, sweep) {
+      if (!sessionID.trim()) throw new Error("native-session-required")
       const live = sweep?.liveSessions ?? []
       if (!Array.isArray(live) || live.some((item) => typeof item !== "string"))
         throw new Error("invalid-live-sessions")
-      const record = read(sessionID)
+      const record = own(sessionID)
       if (!record) return []
       const flagged = record.works.filter((work) => !work.stale && stale(work, live))
       if (flagged.length === 0) return []
       const ids = new Set(flagged.map((work) => work.id))
-      withWorks(sessionID, (current) => ({
-        ...current,
-        works: current.works.map((work) => (ids.has(work.id) ? { ...work, stale: true } : work)),
-      }))
+      transaction(() => {
+        for (const work of record.works) {
+          if (ids.has(work.id)) {
+            updateWork.run(
+              work.status,
+              work.updatedAt,
+              1,
+              work.handedOffFrom ?? null,
+              work.id,
+              work.sessionID,
+            )
+          }
+        }
+      })
       return flagged.map((work) => work.id)
     },
     recover(sessionID, workID, disposition) {
       if (!dispositions.includes(disposition)) throw new Error("invalid-recovery-disposition")
       if (typeof workID !== "string" || !workID.trim()) throw new Error("work-id-required")
-      const record = read(sessionID)
+      if (!sessionID.trim()) throw new Error("native-session-required")
+      const record = own(sessionID)
       const work = record ? selected(record, workID) : null
       if (!work) return null
       if (terminal(work.status)) throw new Error("terminal-work")
       if (!work.stale) throw new Error("stale-work-required")
+      const now = new Date(clock()).toISOString()
       const changed: BoulderWork = {
         ...work,
         status: disposition === "abandon" ? "abandoned" : work.status,
         stale: undefined,
-        updatedAt: new Date(clock()).toISOString(),
+        updatedAt: now,
       }
-      withWorks(sessionID, (current) => ({
-        ...current,
-        works: current.works.map((item) => (item.id === work.id ? changed : item)),
-      }))
+      updateWork.run(
+        changed.status,
+        changed.updatedAt,
+        0,
+        changed.handedOffFrom ?? null,
+        changed.id,
+        changed.sessionID,
+      )
       return changed
     },
   }
@@ -338,82 +474,4 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
 
 function terminal(status: WorkStatus): boolean {
   return status === "completed" || status === "abandoned"
-}
-
-function decode(text: string): SessionRecord {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw new Error("invalid-work-state")
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-    throw new Error("invalid-work-state")
-  const candidate = parsed as Record<string, unknown>
-  // Version 1 stored exactly one work per session; reading it stays supported.
-  if (candidate.version === 1) {
-    if (!validWork(candidate)) throw new Error("invalid-work-state")
-    return { version: 2, works: [candidate as unknown as BoulderWork], invitations: [] }
-  }
-  if (candidate.version !== 2) throw new Error("invalid-work-state")
-  if (
-    !Array.isArray(candidate.works) ||
-    !Array.isArray(candidate.invitations) ||
-    new Set((candidate.works as Array<{ id?: unknown }>).map((work) => work?.id)).size !==
-      candidate.works.length
-  )
-    throw new Error("invalid-work-state")
-  const works = candidate.works as unknown[]
-  const invitations = candidate.invitations as unknown[]
-  if (!works.every((work) => validWork(work))) throw new Error("invalid-work-state")
-  if (
-    !invitations.every(
-      (item) =>
-        item !== null &&
-        typeof item === "object" &&
-        !Array.isArray(item) &&
-        validInvitation(item as Record<string, unknown>),
-    )
-  )
-    throw new Error("invalid-work-state")
-  return {
-    version: 2,
-    works: works as BoulderWork[],
-    invitations: invitations as HandoffInvitation[],
-  }
-}
-
-function validWork(work: unknown): boolean {
-  if (!work || typeof work !== "object" || Array.isArray(work)) return false
-  const record = work as Record<string, unknown>
-  return (
-    record.version === 1 &&
-    typeof record.id === "string" &&
-    Boolean(record.id) &&
-    typeof record.sessionID === "string" &&
-    Boolean(record.sessionID) &&
-    typeof record.plan === "string" &&
-    Boolean(record.plan) &&
-    typeof record.status === "string" &&
-    statuses.includes(record.status as WorkStatus) &&
-    typeof record.createdAt === "string" &&
-    Number.isFinite(Date.parse(record.createdAt)) &&
-    typeof record.updatedAt === "string" &&
-    Number.isFinite(Date.parse(record.updatedAt)) &&
-    (record.stale === undefined || typeof record.stale === "boolean") &&
-    (record.handedOffFrom === undefined ||
-      (typeof record.handedOffFrom === "string" && Boolean(record.handedOffFrom)))
-  )
-}
-
-function validInvitation(item: Record<string, unknown>): boolean {
-  return (
-    typeof item.workID === "string" &&
-    Boolean(item.workID) &&
-    typeof item.fromSessionID === "string" &&
-    Boolean(item.fromSessionID) &&
-    typeof item.at === "string" &&
-    Number.isFinite(Date.parse(item.at)) &&
-    (item.state === "offered" || item.state === "claimed")
-  )
 }

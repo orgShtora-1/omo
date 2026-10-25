@@ -1,6 +1,8 @@
 import type { Plugin } from "@opencode/plugin"
 import type { ToolGuardsConfig } from "../config/schema"
 import { transformHashlineRead } from "../hashline/enhancer"
+import { mountEditRecovery } from "../tools/edit-recovery"
+import { mountWriteGuard } from "../tools/write-guard"
 
 /** Maximum characters kept per tool output field before truncation. */
 const OUTPUT_LIMIT = 100_000
@@ -166,12 +168,27 @@ export async function mountToolGuards(
   hashlineEnabled = false,
   toolGuards?: ToolGuardsConfig,
 ): Promise<() => Promise<void>> {
+  const disposers: Array<() => Promise<void>> = []
+  // Edit error recovery: catches AI mistakes on the `edit` tool and injects
+  // a recovery reminder into the output. Always-on (no config gate) — the
+  // hook is cheap and only touches `edit` tool results with known error
+  // patterns.
+  disposers.push(await mountEditRecovery(ctx))
+  // Write-existing-file guard: blocks writes to files that exist on disk
+  // but haven't been read in this session. Opt-in via `write_guard.enabled`.
+  if (toolGuards?.writeGuard?.enabled) {
+    disposers.push(await mountWriteGuard(ctx))
+  }
   const hook = await ctx.tool.hook("execute.after", (input) => {
     const after = input as AfterInput
-    if (after.status === "completed") {
-      guardResult(after.result)
-      if (hashlineEnabled && after.tool === "read") tagReadOutput(after.result)
-    } else guardError(after.error)
+    try {
+      if (after.status === "completed") {
+        guardResult(after.result)
+        if (hashlineEnabled && after.tool === "read") tagReadOutput(after.result)
+      } else guardError(after.error)
+    } catch (error) {
+      console.error("[omo] execute.after hook error:", error)
+    }
   })
   // Optional write/read guards from the resolved `tool_guards` option: the
   // hook is registered only when enabled, so the default adds no hook. A
@@ -190,6 +207,7 @@ export async function mountToolGuards(
       : undefined
   if (!hashlineEnabled) {
     return async () => {
+      for (const dispose of disposers) await dispose()
       if (guard) await guard.dispose()
       await hook.dispose()
     }
@@ -201,6 +219,7 @@ export async function mountToolGuards(
   })
   return async () => {
     await transform.dispose()
+    for (const dispose of disposers) await dispose()
     if (guard) await guard.dispose()
     await hook.dispose()
   }

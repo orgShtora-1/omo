@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -9,6 +10,10 @@ async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-review-"))
   const store = openGoalStore(join(dir, "goals"))
   return { store, cleanup: () => rm(dir, { recursive: true, force: true }) }
+}
+
+function dbPath(dir: string) {
+  return join(dir, "goals", "goal.db")
 }
 
 /** Mirrors the host payload, whose `cache` sub-object may be absent or partial. */
@@ -99,17 +104,14 @@ test("cancelled goals stay cancelled through recovery, failed admission and new 
 test("a legacy record cancelled with an unresolved admission cannot be reopened as paused", async () => {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-legacy-"))
   const store = openGoalStore(join(dir, "goals"))
-  const file = join(dir, "goals", "legacy.json")
   try {
     store.set("legacy", "first")
-    const record = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>
-    record.status = "cancelled"
-    record.continuationPending = true
-    record.continuationID = "admission-1"
-    // A record only carries an open active interval while active; keeping one on a
-    // cancelled goal would be corrupt, so this is the pre-existing record shape.
-    delete record.activeSince
-    await writeFile(file, JSON.stringify(record), "utf8")
+    const db = new Database(dbPath(dir))
+    db.run(
+      "UPDATE omo_goals SET status = 'cancelled', continuation_pending = 1, continuation_id = 'admission-1', active_since = NULL WHERE session_id = ?",
+      ["legacy"],
+    )
+    db.close()
     // A record written before cancellation cleared pending work must stay terminal.
     const abandoned = store.recoverContinuation("legacy", "abandon")
     expect(abandoned?.status).toBe("cancelled")

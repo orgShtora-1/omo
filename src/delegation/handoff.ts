@@ -1,10 +1,9 @@
 import type { HandoffInput } from "../contracts.js"
+import { OmoError } from "../errors/base.js"
 
-class HandoffError extends Error {
-  readonly code = "handoff-too-large"
+class HandoffError extends OmoError {
   constructor(message: string) {
-    super(message)
-    this.name = "HandoffError"
+    super("handoff-too-large", message)
   }
 }
 

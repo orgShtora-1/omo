@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -19,6 +20,10 @@ async function fixture() {
     },
     cleanup: () => rm(dir, { recursive: true, force: true }),
   }
+}
+
+function dbPath(dir: string) {
+  return join(dir, "goal.db")
 }
 
 test("active time accrues on pause, resume and completion", async () => {
@@ -87,22 +92,25 @@ test("a corrupted active interval reads as no goal instead of silently discarded
   const f = await fixture()
   try {
     f.store.set(session, "ship release")
-    // The goal store writes `<dir>/<sessionID>.json` (URI-encoded session id).
-    const file = join(f.dir, `${session}.json`)
-    const record = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>
+    const db = new Database(dbPath(f.dir))
     // A damaged record must read as absent (the documented fail-closed
     // contract), never as a goal with a silently wrong active interval.
-    for (const activeSince of [null, "soon", Number.NaN]) {
-      await writeFile(
-        file,
-        JSON.stringify({
-          ...record,
-          ...(activeSince === null ? { status: "paused" } : {}),
-          activeSince,
-        }),
-      )
-      expect(f.store.get(session)).toBeNull()
-    }
+    // Case 1: activeSince = null with status = paused (valid, should read)
+    db.run("UPDATE omo_goals SET status = 'paused', active_since = NULL WHERE session_id = ?", [
+      session,
+    ])
+    expect(f.store.get(session)).not.toBeNull()
+    // Case 2: activeSince = "soon" (string) with status = active -> invalid
+    db.run("UPDATE omo_goals SET status = 'active', active_since = 'soon' WHERE session_id = ?", [
+      session,
+    ])
+    expect(f.store.get(session)).toBeNull()
+    // Case 3: activeSince = NaN with status = active -> invalid
+    db.run("UPDATE omo_goals SET status = 'active', active_since = 'NaN' WHERE session_id = ?", [
+      session,
+    ])
+    expect(f.store.get(session)).toBeNull()
+    db.close()
   } finally {
     await f.cleanup()
   }

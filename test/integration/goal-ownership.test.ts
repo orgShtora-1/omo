@@ -44,10 +44,12 @@ async function fixture() {
   const dispose = await mountGoal(ctx, stateDir, true)
   const store = openGoalStore(goalDirectory(stateDir))
   store.set("ses_victim", "Private victim objective")
-  const victimFile = join(goalDirectory(stateDir), "ses_victim.json")
+  // Snapshot the victim's stored objective — used to verify the record is
+  // unchanged after a foreign-session attempt.
+  const victimSnapshot = store.get("ses_victim")?.objective ?? null
   return {
     store,
-    victimBytes: () => readFile(victimFile, "utf8"),
+    victimBytes: () => Promise.resolve(JSON.stringify(victimSnapshot)),
     tool(name: string) {
       const tool = tools.get(name)
       if (!tool) throw new Error(`missing registered tool: ${name}`)

@@ -4,10 +4,11 @@
  * record unresolved ("admitted") so the next runtime instance can reconcile
  * and adopt the still-running child, instead of interrupting it.
  */
-export class RuntimeDetach extends Error {
+import { OmoError } from "../errors/base.js"
+
+export class RuntimeDetach extends OmoError {
   constructor() {
-    super("runtime unloaded")
-    this.name = "RuntimeDetach"
+    super("runtime-detach", "runtime unloaded")
   }
 }
 

@@ -1,6 +1,7 @@
 import type { ResolvedOptions } from "../config/resolve.js"
 import { FIXED_CATEGORIES, sameModel } from "../config/schema.js"
 import type { DelegationPolicy, DelegationRequest, ModelRef } from "../contracts.js"
+import { OmoError } from "../errors/base.js"
 import { type SkillCatalogEntry, selectSkills } from "./skills.js"
 
 export type DelegationCatalog = {
@@ -18,9 +19,9 @@ const DEFAULT_AGENTS: Record<string, string> = {
   validate: "verifier",
 }
 
-class DelegationPolicyError extends Error {
+class DelegationPolicyError extends OmoError {
   constructor(
-    readonly code:
+    override readonly code:
       | "unknown-category"
       | "unknown-agent"
       | "primary-agent"
@@ -28,8 +29,7 @@ class DelegationPolicyError extends Error {
       | "disallowed-model",
     message: string,
   ) {
-    super(message)
-    this.name = "DelegationPolicyError"
+    super(code, message)
   }
 }
 

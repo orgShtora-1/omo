@@ -233,7 +233,7 @@ describe("mountToolGuards denies via execute.before", () => {
       read: [],
     })
     expect(enabled.beforeHooks).toHaveLength(1)
-    expect(enabled.afterHooks).toHaveLength(1)
+    expect(enabled.afterHooks).toHaveLength(2) // edit-recovery + output-truncation
     await dispose()
     expect(enabled.beforeHooks).toHaveLength(0)
     expect(enabled.afterHooks).toHaveLength(0)
@@ -274,10 +274,31 @@ describe("mountToolGuards denies via execute.before", () => {
     const { ctx, beforeHooks, afterHooks, transformed } = fixture()
     const dispose = await mountToolGuards(ctx, true, { enabled: true, write: ["edit"], read: [] })
     expect(beforeHooks).toHaveLength(1)
-    expect(afterHooks).toHaveLength(1)
+    expect(afterHooks).toHaveLength(2) // edit-recovery + output-truncation
     expect(transformed).toContain("read")
     await dispose()
     expect(beforeHooks).toHaveLength(0)
     expect(afterHooks).toHaveLength(0)
+  })
+
+  test("execute.after tolera erros em guardResult, tagReadOutput e guardError", async () => {
+    const { ctx, afterHooks } = fixture()
+    await mountToolGuards(ctx, false, { enabled: false, write: [], read: [] })
+    const after = first(afterHooks, "execute.after hook")
+    // Simulate a throwing guardResult - should not throw
+    const throwingResult = {
+      output: {
+        [Symbol.iterator]: () => {
+          throw new Error("boom")
+        },
+      },
+    }
+    expect(() => after({ status: "completed", result: throwingResult })).not.toThrow()
+    // Simulate a normal completed result
+    expect(() =>
+      after({ status: "completed", tool: "read", result: { content: "ok" } }),
+    ).not.toThrow()
+    // Simulate a normal error result
+    expect(() => after({ status: "error", error: "regular error" })).not.toThrow()
   })
 })

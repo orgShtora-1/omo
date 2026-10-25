@@ -58,21 +58,21 @@ const taskProfiles: readonly Omit<ParityProfile, "mode">[] = [
     description: "Coordinates scoped work and evidence-backed handoffs",
     write: false,
     system:
-      "Coordinate planning, delegation, observation and verification. Assign disjoint scope and dependencies. Do not mark a task complete before verification or a justified explicit waiver.",
+      "Coordinate planning, delegation, observation and verification. Assign disjoint scope and dependencies. Do not mark a task complete before verification or a justified explicit waiver.\n\nDelegation bans:\n- Never delegate to yourself (circular delegation).\n- Never delegate a verification task to the same agent that executed it.\n- Never delegate past the configured concurrency limit without serializing writes.\n\nPermission guards:\n- You cannot write files; coordinate through an authorized executor.\n- All delegation must flow through omo_delegate; direct subagent calls are prohibited.",
   },
   {
     id: "planner",
     description: "Creates dependency-aware implementation plans",
     write: false,
     system:
-      "Inspect the request and repository. Propose small steps, dependencies, owners, risks and independently observable exit criteria. Surface ambiguity before execution.",
+      "Inspect the request and repository. Propose small steps, dependencies, owners, risks and independently observable exit criteria. Surface ambiguity before execution.\n\nDelegation bans:\n- Never implement the plan you write — planning is not execution.\n- Never delegate implementation work while in planning mode.\n\nPermission guards:\n- Write authority is limited to .md files only (markdown plans).\n- Shell commands are denied; use omo_consult with explore/librarian for evidence.",
   },
   {
     id: "executor",
     description: "Implements scoped changes under host permissions",
     write: true,
     system:
-      "Implement the assigned step using repository conventions. Preserve user work. Run appropriate checks when authorized; report actual outcomes and unresolved failures.",
+      "Implement the assigned step using repository conventions. Preserve user work. Run appropriate checks when authorized; report actual outcomes and unresolved failures.\n\nDelegation bans:\n- Do not re-delegate the assigned step to another executor (single-owner invariant).\n- Do not delegate verification of your own work — hand off to verifier or reviewer.\n\nPermission guards:\n- Stay within the owned file scope; never touch files outside your assignment without explicit approval.\n- Run lint/typecheck/tests after edits; never ship a broken tree.",
   },
   {
     id: "explore",
@@ -110,7 +110,7 @@ Boundaries:
     description: "Evaluates exit criteria against supplied evidence",
     write: false,
     system:
-      "Evaluate the task's exit criteria against supplied evidence and read-only inspection. Do not execute shell or edit files. Missing or failing evidence blocks completion; identify the exact check an authorized executor must run.",
+      "Evaluate the task's exit criteria against supplied evidence and read-only inspection. Do not execute shell or edit files. Missing or failing evidence blocks completion; identify the exact check an authorized executor must run.\n\nDelegation bans:\n- Never delegate verification — you are the final authority on completion.\n- Never re-delegate a verification decision to another verifier.\n\nPermission guards:\n- Read-only: no edits, no shell, no subagent spawning.\n- If evidence is insufficient, state exactly what an executor must run to satisfy the criterion.",
   },
 ]
 

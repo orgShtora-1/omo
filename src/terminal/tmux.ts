@@ -2,13 +2,12 @@ import { createHash, randomUUID } from "node:crypto"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { OmoError } from "../errors/base.js"
 import { ProcessError, runBounded } from "../subprocess.js"
 
-class TerminalCapabilityError extends Error {
-  readonly code = "capability"
+class TerminalCapabilityError extends OmoError {
   constructor(message: string) {
-    super(message)
-    this.name = "TerminalCapabilityError"
+    super("capability", message)
   }
 }
 export interface MonitorRun {

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -99,11 +100,16 @@ test("get on a missing goal is null and clear removes the record", async () => {
   }
 })
 
-test("a corrupt goal file is treated as absent", async () => {
+test("a corrupt goal record is treated as absent", async () => {
   const { dir, cleanup } = await tempDir()
   try {
-    writeFileSync(join(dir, "ses_bad.json"), "{not json", "utf8")
     const store = openGoalStore(dir)
+    store.set("ses_bad", "Valid objective")
+    // Corrupt the status in SQLite directly so read validation fails closed.
+    const dbPath = join(dir, "goal.db")
+    const corruptDb = new Database(dbPath)
+    corruptDb.run(`UPDATE omo_goals SET status = 'not-a-status' WHERE session_id = ?`, ["ses_bad"])
+    corruptDb.close(true)
     expect(store.get("ses_bad")).toBeNull()
   } finally {
     await cleanup()
@@ -133,7 +139,19 @@ test("invalid persisted goal status, objective, and continuation count fail clos
       { continuations: 0.5 },
       { continuations: Number.MAX_SAFE_INTEGER + 1 },
     ]) {
-      writeFileSync(join(dir, "ses_bad.json"), JSON.stringify({ ...original, ...patch }), "utf8")
+      // Write the corrupt data directly into SQLite so read validation catches it.
+      const dbPath = join(dir, "goal.db")
+      const corruptDb = new Database(dbPath)
+      corruptDb.run(
+        `UPDATE omo_goals SET status = ?, objective = ?, continuations = ? WHERE session_id = ?`,
+        [
+          patch.status ?? original.status,
+          patch.objective ?? original.objective,
+          patch.continuations ?? original.continuations,
+          "ses_bad",
+        ],
+      )
+      corruptDb.close(true)
       expect(store.get("ses_bad")).toBeNull()
     }
   } finally {

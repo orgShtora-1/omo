@@ -1,3 +1,5 @@
+import { type ErrorCode, OmoError } from "../errors/base.js"
+
 export type SkillCatalogEntry = { id: string; name: string; description?: string }
 
 export type ScoredSkill = { id: string; score: number; hits: string[] }
@@ -40,14 +42,12 @@ export function scoreSkills(
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
 }
 
-class SkillSelectionError extends Error {
-  readonly code = "unknown-skill"
+class SkillSelectionError extends OmoError {
   constructor(
     readonly source: "explicit" | "required",
     readonly skill: string,
   ) {
-    super(`${source} skill not found: ${skill}`)
-    this.name = "SkillSelectionError"
+    super("unknown-skill", `${source} skill not found: ${skill}`)
   }
 }
 

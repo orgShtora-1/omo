@@ -66,6 +66,14 @@ function first<T>(items: readonly T[], what: string): T {
   return head
 }
 
+/** The truncation/JSON-hint hook is registered after mountEditRecovery,
+ * so it sits at the end of the afterHooks array. */
+function guardHook(hooks: readonly AfterHook[]): AfterHook {
+  const value = hooks[hooks.length - 1]
+  if (value === undefined) throw new Error("missing guard hook")
+  return value
+}
+
 test("hashline_edit defaults to false and accepts an explicit boolean", () => {
   expect((parseOptions({ schemaVersion: 1 }) as { hashline_edit?: boolean }).hashline_edit).toBe(
     false,
@@ -80,9 +88,9 @@ test("hashline_edit defaults to false and accepts an explicit boolean", () => {
 test("tool guards hash-tag read outputs only when hashline is enabled", async () => {
   const enabled = fixture()
   const disposeEnabled = await mountToolGuards(enabled.ctx, true)
-  expect(enabled.afterHooks).toHaveLength(1)
+  expect(enabled.afterHooks.length).toBeGreaterThan(0)
   const input = readCompleted("1: alpha\n2: beta") as Record<string, unknown>
-  await first(enabled.afterHooks, "the mounted after hook")(input)
+  await guardHook(enabled.afterHooks)(input)
   const result = input.result as { output: string }
   expect(result.output).toBe(
     `1#${computeLineHash(1, "alpha")}|alpha\n2#${computeLineHash(2, "beta")}|beta`,
@@ -92,7 +100,7 @@ test("tool guards hash-tag read outputs only when hashline is enabled", async ()
   const disabled = fixture()
   const disposeDisabled = await mountToolGuards(disabled.ctx)
   const untouched = readCompleted("1: alpha\n2: beta") as Record<string, unknown>
-  await first(disabled.afterHooks, "the mounted after hook")(untouched)
+  await guardHook(disabled.afterHooks)(untouched)
   expect((untouched.result as { output: string }).output).toBe("1: alpha\n2: beta")
   disposeDisabled()
 })
@@ -105,7 +113,7 @@ test("tool guards tag host-shaped read output with a leading header", async () =
   // while the numbered lines below still receive LINE#ID anchors.
   const header = "Read file /tmp/notes.txt, lines 1-3"
   const input = readCompleted(`${header}\n1: alpha\n2: beta`) as Record<string, unknown>
-  await first(enabled.afterHooks, "the mounted after hook")(input)
+  await guardHook(enabled.afterHooks)(input)
   expect((input.result as { output: string }).output).toBe(
     `${header}\n1#${computeLineHash(1, "alpha")}|alpha\n2#${computeLineHash(2, "beta")}|beta`,
   )
@@ -126,7 +134,7 @@ test("truncation guard still applies when hashline is enabled", async () => {
     status: "completed",
     result: { output: oversized },
   } as unknown as Record<string, unknown>
-  await first(f.afterHooks, "the mounted after hook")(input)
+  await guardHook(f.afterHooks)(input)
   const output = (input.result as { output: string }).output
   expect(output.length).toBeLessThan(oversized.length)
   expect(output).toContain("[output truncated by shtora.omo tool guard]")

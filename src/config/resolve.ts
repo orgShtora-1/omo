@@ -4,6 +4,7 @@ import type { OsNotificationsConfig } from "../execution/os-notifications"
 import { type ResolvedMcpOptions, resolveMcpOptions } from "../mcp/config"
 import type { DreamConfig } from "../memory/dream"
 import type { ModelFallbackConfig } from "./model-fallback"
+import type { ProactiveModelFallbackConfig } from "./model-proactive-fallback"
 import { DEFAULT_PACKAGE_MANAGER } from "./runtime"
 import type {
   CategoryConfig,
@@ -61,6 +62,7 @@ export type ResolvedOptions = {
   preemptive_compaction: PreemptiveCompactionConfig
   os_notifications: OsNotificationsConfig
   model_fallback: ModelFallbackConfig
+  proactive_model_fallback: ProactiveModelFallbackConfig
   teams?: Record<string, unknown>
   lsp?: Record<string, unknown>
   terminal?: Record<string, unknown>
@@ -122,6 +124,7 @@ export function resolveOptions(input: OmoOptions): ResolvedOptions {
     preemptive_compaction: input.preemptive_compaction,
     os_notifications: input.os_notifications,
     model_fallback: input.model_fallback,
+    proactive_model_fallback: input.proactive_model_fallback,
     teams: input.teams,
     lsp: input.lsp,
     terminal: input.terminal,

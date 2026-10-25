@@ -2,11 +2,14 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import { registerAgents } from "./agents/registry"
+import { mountThinkMode } from "./agents/think-mode"
 import { openBoulderContext } from "./boulder/context"
 import { mountBoulder } from "./boulder/tools"
 import { loadOmoConfig } from "./config/file"
 import { mountModelFallback } from "./config/model-fallback"
+import { mountProactiveModelFallback } from "./config/model-proactive-fallback"
 import { parseOptions } from "./config/schema"
+import { mountTodoPreserver } from "./context/todo-preserver"
 import type { PlanStepInput } from "./contracts"
 import { mountDeepIni } from "./deepini/commands"
 import { mountBlockedPanel } from "./diagnostics/tool"
@@ -106,6 +109,7 @@ const plugin = Plugin.define({
         skills: mcp.skillsContribution,
       }
       disposers.push(await registerAgents(ctx, options))
+      disposers.push(await mountThinkMode(ctx, options.profiles))
       // Reactive model fallback sits right after the profiles so the fail-closed
       // model.request guard stays primary: a fallback only ever selects a model the
       // allowlist already permits, and leaves the host's decision untouched otherwise.
@@ -115,6 +119,23 @@ const plugin = Plugin.define({
           profiles: options.profiles,
         }),
       )
+      // Proactive model fallback monitors context size per model request and
+      // switches to a larger-context candidate BEFORE overflow, complementing
+      // the reactive retry fallback above.
+      if (options.proactive_model_fallback?.enabled) {
+        disposers.push(
+          await mountProactiveModelFallback(
+            ctx,
+            options.proactive_model_fallback,
+            {
+              allowedModels: options.allowedModels,
+              profiles: options.profiles,
+            },
+            options.model_fallback.profiles,
+            options.execution.modelLimits,
+          ),
+        )
+      }
       // After the agent profiles: /deep-ini tells the model to fan out through the native
       // subagent tool, and that tool resolves the OMO_* profiles by name at call time.
       disposers.push(await mountDeepIni(ctx))
@@ -129,6 +150,7 @@ const plugin = Plugin.define({
       )
       disposers.push(todos)
       disposers.push(await mountHandoff(ctx, todos))
+      disposers.push(await mountTodoPreserver(ctx, todos))
       disposers.push(await mountTeams(ctx, stateHome))
       disposers.push(await mountSessions(ctx))
       // Slash-command surface for the model: opt-in (command_tool_enabled), and the

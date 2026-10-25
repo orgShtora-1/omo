@@ -1,14 +1,14 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, sep } from "node:path"
+import { OmoError } from "../errors/base.js"
 import { collect, sha256File } from "./files"
 
-class BackupError extends Error {
+class BackupError extends OmoError {
   constructor(
-    readonly code: "not-a-backup" | "backup-corrupt",
+    override readonly code: "not-a-backup" | "backup-corrupt",
     detail: string,
   ) {
-    super(`${code}: ${detail}`)
-    this.name = "BackupError"
+    super(code, `${code}: ${detail}`)
   }
 }
 

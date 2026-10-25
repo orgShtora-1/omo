@@ -11,6 +11,14 @@ function first<T>(items: readonly T[], what: string): T {
   return value
 }
 
+/** The truncation/JSON-hint hook is registered after mountEditRecovery,
+ * so it sits at the end of the afterHooks array. */
+function guardHook(hooks: readonly AfterHook[]): AfterHook {
+  const value = hooks[hooks.length - 1]
+  if (value === undefined) throw new Error("missing guard hook")
+  return value
+}
+
 interface GuardsFixture {
   ctx: Plugin.Context
   afterHooks: AfterHook[]
@@ -124,7 +132,7 @@ function failed(message: string): ErrorInput {
 test("tool guards truncate oversized output and content", async () => {
   const { ctx, afterHooks } = fixture()
   const dispose = await mountToolGuards(ctx)
-  const after = first(afterHooks, "execute.after hook")
+  const after = guardHook(afterHooks)
 
   const big = "x".repeat(150_000)
   const completedInput = completed({ output: big, content: big })
@@ -146,7 +154,7 @@ test("tool guards truncate oversized output and content", async () => {
 test("tool guards leave small results untouched", async () => {
   const { ctx, afterHooks } = fixture()
   await mountToolGuards(ctx)
-  const after = first(afterHooks, "execute.after hook")
+  const after = guardHook(afterHooks)
 
   const completedInput = completed({ output: "short", content: [{ type: "text", text: "ok" }] })
   await after(completedInput)
@@ -157,7 +165,7 @@ test("tool guards leave small results untouched", async () => {
 test("tool guards append a JSON correction hint to json errors", async () => {
   const { ctx, afterHooks } = fixture()
   await mountToolGuards(ctx)
-  const after = first(afterHooks, "execute.after hook")
+  const after = guardHook(afterHooks)
 
   const jsonError = failed("Unexpected token } in JSON at position 42")
   await after(jsonError)
@@ -172,7 +180,7 @@ test("tool guards append a JSON correction hint to json errors", async () => {
 test("tool guards truncate long text parts inside content arrays", async () => {
   const { ctx, afterHooks } = fixture()
   await mountToolGuards(ctx)
-  const after = first(afterHooks, "execute.after hook")
+  const after = guardHook(afterHooks)
 
   const big = "y".repeat(150_000)
   const completedInput = completed({ content: [{ type: "text", text: big }] })
@@ -232,7 +240,7 @@ test.each(["string", "parts"])(
     const dispose = await mountToolGuards(ctx, true)
     const result = await readTool.execute({}, {})
     expect(result.content).toEqual(expected)
-    const after = first(afterHooks, "execute.after hook")
+    const after = guardHook(afterHooks)
     const input = completed({ content })
     input.tool = "read"
     await after(input)

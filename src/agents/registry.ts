@@ -1,6 +1,7 @@
 import { Model, type Plugin } from "@opencode/plugin"
 import { assertAgentModelAllowed } from "../config/models"
 import type { ResolvedOptions } from "../config/resolve"
+import { OmoError } from "../errors/base.js"
 import { type AgentRestriction, profiles } from "./prompts"
 
 // V2 exposes no origin marker. Only augment the exact standard host role;
@@ -50,13 +51,12 @@ function restrictionRules(restriction: AgentRestriction): Rule[] {
   }
 }
 
-class AgentRegistrationError extends Error {
-  readonly code = "agent-collision"
+class AgentRegistrationError extends OmoError {
   constructor(readonly agentID: string) {
     super(
+      "agent-collision",
       `Agent ${agentID} already exists; rename it or disable its other registration before enabling omo.`,
     )
-    this.name = "AgentRegistrationError"
   }
 }
 

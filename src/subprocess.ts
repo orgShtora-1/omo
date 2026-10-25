@@ -1,13 +1,13 @@
 import { spawn } from "node:child_process"
+import { OmoError } from "./errors/base.js"
+import { logError } from "./errors/logging.js"
+import type { ERROR_CODES, ErrorCode } from "./errors/registry.js"
 
-export type ProcessErrorCode = "timeout" | "spawn" | "cancelled"
+export type ProcessErrorCode = ErrorCode & (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
 
-export class ProcessError extends Error {
-  readonly code: ProcessErrorCode
-  constructor(code: ProcessErrorCode, message: string) {
-    super(message)
-    this.name = "ProcessError"
-    this.code = code
+export class ProcessError extends OmoError {
+  constructor(code: ProcessErrorCode, message: string, options?: { cause?: unknown }) {
+    super(code, message, options)
   }
 }
 

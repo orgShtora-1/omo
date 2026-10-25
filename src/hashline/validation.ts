@@ -1,10 +1,12 @@
+import { type ErrorDetails, OmoError } from "../errors/base.js"
 import { computeLegacyLineHash, computeLineHash, HASHLINE_REF_PATTERN } from "./hash"
 
-export class HashlineMismatchError extends Error {
+export class HashlineMismatchError extends OmoError {
   readonly remaps: Map<string, string>
   constructor(message: string, remaps: Map<string, string>) {
-    super(message)
-    this.name = "HashlineMismatchError"
+    super("hashline-mismatch", message, {
+      details: { remaps: [...remaps.entries()] } as ErrorDetails,
+    })
     this.remaps = remaps
   }
 }
