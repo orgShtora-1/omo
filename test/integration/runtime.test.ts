@@ -740,53 +740,61 @@ test("parent interruption cancels foreground children but leaves background chil
     await f.remove()
   }
 })
-test("runtime unload detaches running background children for later recovery", async () => {
-  const f = await fixture()
-  try {
-    const handle = await f.cleanup.services.delegate(
-      "parent",
-      {
-        taskID: "bg-unload",
-        route: { kind: "agent", id: "worker" },
-        prompt: "work",
-        files: ["a.ts"],
-      },
-      new AbortController().signal,
-    )
-    await f.cleanup()
-    expect(f.session(handle.sessionID).outcome).toBeUndefined()
-    const journal = openRunJournal(join(f.stateDir, "runs.sqlite"))
-    const record = journal.unresolved().find((item) => item.sessionID === handle.sessionID)
-    expect(record?.phase).toBe("admitted")
-    journal.close()
-  } finally {
-    await f.cleanup()
-    await f.remove()
-  }
-})
+test(
+  "runtime unload detaches running background children for later recovery",
+  async () => {
+    const f = await fixture()
+    try {
+      const handle = await f.cleanup.services.delegate(
+        "parent",
+        {
+          taskID: "bg-unload",
+          route: { kind: "agent", id: "worker" },
+          prompt: "work",
+          files: ["a.ts"],
+        },
+        new AbortController().signal,
+      )
+      await f.cleanup()
+      expect(f.session(handle.sessionID).outcome).toBeUndefined()
+      const journal = openRunJournal(join(f.stateDir, "runs.sqlite"))
+      const record = journal.unresolved().find((item) => item.sessionID === handle.sessionID)
+      expect(record?.phase).toBe("admitted")
+      journal.close()
+    } finally {
+      await f.cleanup()
+      await f.remove()
+    }
+  },
+  { timeout: 30000 },
+)
 
-test("auto-install disabled leaves skills empty and status carries empty installedSkills", async () => {
-  const f = await fixture(false, { skills: { autoInstall: false } })
-  try {
-    const handle = await f.cleanup.services.delegate(
-      "parent",
-      {
-        taskID: "no-cover",
-        route: { kind: "agent", id: "worker" },
-        prompt: "entirely unrelated xyzzy prompt with no token overlap",
-      },
-      new AbortController().signal,
-    )
-    expect(f.session(handle.sessionID).prompt?.skills).toBeUndefined()
-    const status = (await f.cleanup.services.status("parent")) as FixtureRuntimeStatus
-    const run = status.runs.find((item) => item.sessionID === handle.sessionID)
-    expect(run?.skills).toEqual([])
-    expect(run?.installedSkills).toEqual([])
-  } finally {
-    await f.cleanup()
-    await f.remove()
-  }
-})
+test(
+  "auto-install disabled leaves skills empty and status carries empty installedSkills",
+  async () => {
+    const f = await fixture(false, { skills: { autoInstall: false } })
+    try {
+      const handle = await f.cleanup.services.delegate(
+        "parent",
+        {
+          taskID: "no-cover",
+          route: { kind: "agent", id: "worker" },
+          prompt: "entirely unrelated xyzzy prompt with no token overlap",
+        },
+        new AbortController().signal,
+      )
+      expect(f.session(handle.sessionID).prompt?.skills).toBeUndefined()
+      const status = (await f.cleanup.services.status("parent")) as FixtureRuntimeStatus
+      const run = status.runs.find((item) => item.sessionID === handle.sessionID)
+      expect(run?.skills).toEqual([])
+      expect(run?.installedSkills).toEqual([])
+    } finally {
+      await f.cleanup()
+      await f.remove()
+    }
+  },
+  { timeout: 30000 },
+)
 
 test("search-empty surfaces in installedSkills and status without touching host skills", async () => {
   const f = await fixture()

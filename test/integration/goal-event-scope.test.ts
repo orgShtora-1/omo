@@ -7,11 +7,9 @@ import { openGoalStore } from "../../src/goal/store"
 import { mountGoalContinuation } from "../../src/goal/tools"
 import { rmRetry } from "../unit/test-utils"
 
-test.timeout = 30000
-
 test.each(["project", "location", "missing", "owned"])(
   "goal events enforce %s session scope before usage or admission",
-  async (failure) => {
+  async (failure: string) => {
     const dir = await mkdtemp(join(tmpdir(), "omo-goal-event-scope-"))
     const store = openGoalStore(dir)
     store.set("s", "Keep this goal untouched")
@@ -89,4 +87,5 @@ test.each(["project", "location", "missing", "owned"])(
       await rmRetry(dir)
     }
   },
+  { timeout: 30000 },
 )

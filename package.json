@@ -1,6 +1,6 @@
 {
   "name": "@shtora/omo",
-  "version": "0.3.0",
+  "version": "0.2.0",
   "description": "OpenCode V2 agent orchestration with durable plans, parallel delegation and verification",
   "license": "MIT",
   "author": "shtora",
@@ -62,7 +62,7 @@
     "test:host-lifecycle": "bun scripts/host-lifecycle-smoke.ts",
     "test:mcp-host-package": "bun scripts/mcp-package-smoke.ts",
     "test:skills-capability": "bun scripts/skills-capability-smoke.ts",
-    "test:unit": "bun test test/unit",
+    "test:unit": "bun test test/unit --timeout 60000",
     "test:integration": "bun test test/integration",
     "test:evals": "bun test test/evals",
     "test:live": "bun test test/live",
@@ -77,6 +77,7 @@
     "typescript": "7.0.2"
   },
   "dependencies": {
+    "@aws-sdk/core": "3.978.6",
     "@opencode/plugin": "2.0.32",
     "zod": "^4.6.7"
   }

@@ -6,7 +6,7 @@ import type { Plugin } from "@opencode/plugin"
 import { mountGoal } from "../../src/goal/tools"
 import { rmRetry } from "../unit/test-utils"
 
-test.timeout = 30000
+// Use test options for timeout instead of property assignment
 
 type ToolRecord = {
   name: string
@@ -104,69 +104,73 @@ function liveFixture(canonical: string) {
   }
 }
 
-test("mountGoal continues an idle session toward its active goal and accrues usage", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "omo-goal-cont-it-"))
-  const { ctx, added, prompts, push } = liveFixture(dir)
-  const dispose = await mountGoal(ctx, dir, true)
-  try {
-    const createTool = added.find((tool) => tool.name === "create_goal")
-    const getTool = added.find((tool) => tool.name === "get_goal")
-    if (!createTool || !getTool) throw new Error("expected goal tools")
-    const session = { sessionID: "ses_live" }
-    await createTool.execute({ objective: "Ship parity gate" }, session)
+test(
+  "mountGoal continues an idle session toward its active goal and accrues usage",
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omo-goal-cont-it-"))
+    const { ctx, added, prompts, push } = liveFixture(dir)
+    const dispose = await mountGoal(ctx, dir, true)
+    try {
+      const createTool = added.find((tool) => tool.name === "create_goal")
+      const getTool = added.find((tool) => tool.name === "get_goal")
+      if (!createTool || !getTool) throw new Error("expected goal tools")
+      const session = { sessionID: "ses_live" }
+      await createTool.execute({ objective: "Ship parity gate" }, session)
 
-    push({ type: "session.idle", data: { sessionID: "ses_live" } })
-    await waitFor("continuation prompt", () => prompts.length > 0)
-    expect(prompts[0]?.sessionID).toBe("ses_live")
-    expect(prompts[0]?.text).toContain("Ship parity gate")
+      push({ type: "session.idle", data: { sessionID: "ses_live" } })
+      await waitFor("continuation prompt", () => prompts.length > 0)
+      expect(prompts[0]?.sessionID).toBe("ses_live")
+      expect(prompts[0]?.text).toContain("Ship parity gate")
 
-    // The host republishes cumulative totals, so the first report only establishes
-    // the baseline and the second report's increase is what gets accrued.
-    push({
-      type: "session.usage.updated",
-      data: {
-        sessionID: "ses_live",
-        cost: 0.02,
-        tokens: { input: 10, output: 5, reasoning: 1, cache: { read: 0, write: 0 } },
-      },
-    })
-    push({
-      type: "session.usage.updated",
-      data: {
-        sessionID: "ses_live",
-        cost: 0.06,
-        tokens: { input: 16, output: 8, reasoning: 2, cache: { read: 0, write: 0 } },
-      },
-    })
-    const usageDeadline = Date.now() + 5000
-    let fetched: { output: string } | undefined
-    for (;;) {
-      const current = (await getTool.execute({}, session)) as { output: string }
-      const parsed = JSON.parse(current.output) as {
-        goal: { tokensUsed: number } | null
+      // The host republishes cumulative totals, so the first report only establishes
+      // the baseline and the second report's increase is what gets accrued.
+      push({
+        type: "session.usage.updated",
+        data: {
+          sessionID: "ses_live",
+          cost: 0.02,
+          tokens: { input: 10, output: 5, reasoning: 1, cache: { read: 0, write: 0 } },
+        },
+      })
+      push({
+        type: "session.usage.updated",
+        data: {
+          sessionID: "ses_live",
+          cost: 0.06,
+          tokens: { input: 16, output: 8, reasoning: 2, cache: { read: 0, write: 0 } },
+        },
+      })
+      const usageDeadline = Date.now() + 5000
+      let fetched: { output: string } | undefined
+      for (;;) {
+        const current = (await getTool.execute({}, session)) as { output: string }
+        const parsed = JSON.parse(current.output) as {
+          goal: { tokensUsed: number } | null
+        }
+        if (parsed.goal?.tokensUsed === 10) {
+          fetched = current
+          break
+        }
+        if (Date.now() > usageDeadline) throw new Error("timed out waiting for usage accrual")
+        await new Promise((resolve) => setTimeout(resolve, 25))
       }
-      if (parsed.goal?.tokensUsed === 10) {
-        fetched = current
-        break
+      const goal = JSON.parse(fetched.output) as {
+        goal: { tokensUsed: number; costUsed: number; continuations: number } | null
       }
-      if (Date.now() > usageDeadline) throw new Error("timed out waiting for usage accrual")
-      await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(goal.goal?.tokensUsed).toBe(10)
+      expect(goal.goal?.costUsed).toBeCloseTo(0.04)
+      expect(goal.goal?.continuations).toBe(1)
+    } finally {
+      console.log("About to call dispose")
+      await dispose()
+      console.log("dispose returned")
+      console.log("About to call rmRetry")
+      await rmRetry(dir)
+      console.log("rmRetry returned")
     }
-    const goal = JSON.parse(fetched.output) as {
-      goal: { tokensUsed: number; costUsed: number; continuations: number } | null
-    }
-    expect(goal.goal?.tokensUsed).toBe(10)
-    expect(goal.goal?.costUsed).toBeCloseTo(0.04)
-    expect(goal.goal?.continuations).toBe(1)
-  } finally {
-    console.log("About to call dispose")
-    await dispose()
-    console.log("dispose returned")
-    console.log("About to call rmRetry")
-    await rmRetry(dir)
-    console.log("rmRetry returned")
-  }
-})
+  },
+  { timeout: 30000 },
+)
 
 test("mountGoal never subscribes to events when disabled", async () => {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-cont-off-"))

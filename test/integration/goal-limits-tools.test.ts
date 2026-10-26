@@ -7,8 +7,6 @@ import { goalDirectory, openGoalStore, type UsageSnapshot } from "../../src/goal
 import { createGoalCommandService, mountGoal } from "../../src/goal/tools"
 import { rmRetry } from "../unit/test-utils"
 
-test.timeout = 30000
-
 type ToolRecord = {
   name: string
   options: { namespace?: string; permission?: string }
@@ -89,28 +87,32 @@ function snapshot(cost: number, tokens: number): UsageSnapshot {
   }
 }
 
-test("create_goal stores a validated budget and get_goal reports the breach that pauses it", async () => {
-  const f = await fixture()
-  try {
-    expect(
-      (await f.goal("create_goal", { objective: "ship release", limits: { maxCost: 0.1 } })).goal,
-    ).toMatchObject({ status: "active", limits: { maxCost: 0.1 } })
-    expect(f.tool("create_goal").options).toEqual({ namespace: "omo", permission: "edit" })
-    expect(f.tool("get_goal").options).toEqual({ namespace: "omo", permission: "read" })
-    f.store.accrueSnapshot("ses_owner", snapshot(0.05, 10))
-    f.store.accrueSnapshot("ses_owner", snapshot(0.16, 20))
-    expect((await f.goal("get_goal", {})).goal).toMatchObject({
-      status: "paused",
-      limitExceeded: "cost",
-    })
-    // The model cannot re-arm itself past a user budget.
-    await expect(
-      f.tool("update_goal").execute({ status: "active" }, { sessionID: "ses_owner" }),
-    ).rejects.toThrow("limit-exceeded: cost")
-  } finally {
-    await f.cleanup()
-  }
-})
+test(
+  "create_goal stores a validated budget and get_goal reports the breach that pauses it",
+  async () => {
+    const f = await fixture()
+    try {
+      expect(
+        (await f.goal("create_goal", { objective: "ship release", limits: { maxCost: 0.1 } })).goal,
+      ).toMatchObject({ status: "active", limits: { maxCost: 0.1 } })
+      expect(f.tool("create_goal").options).toEqual({ namespace: "omo", permission: "edit" })
+      expect(f.tool("get_goal").options).toEqual({ namespace: "omo", permission: "read" })
+      f.store.accrueSnapshot("ses_owner", snapshot(0.05, 10))
+      f.store.accrueSnapshot("ses_owner", snapshot(0.16, 20))
+      expect((await f.goal("get_goal", {})).goal).toMatchObject({
+        status: "paused",
+        limitExceeded: "cost",
+      })
+      // The model cannot re-arm itself past a user budget.
+      await expect(
+        f.tool("update_goal").execute({ status: "active" }, { sessionID: "ses_owner" }),
+      ).rejects.toThrow("limit-exceeded: cost")
+    } finally {
+      await f.cleanup()
+    }
+  },
+  { timeout: 30000 },
+)
 
 test.each([
   ["zero", { maxCost: 0 }],
@@ -118,152 +120,172 @@ test.each([
   ["unknown dimension", { maxDuration: 60 }],
   ["empty", {}],
   ["non-object", 5],
-])("create_goal refuses a %s budget without writing the goal", async (_name, limits) => {
-  const f = await fixture()
-  try {
-    await expect(
-      f
-        .tool("create_goal")
-        .execute({ objective: "ship release", limits }, { sessionID: "ses_owner" }),
-    ).rejects.toThrow("invalid-limits")
-    expect(f.store.get("ses_owner")).toBeNull()
-    expect(
-      await readFile(join(goalDirectory(f.stateDir), "ses_owner.json"), "utf8").catch(() => null),
-    ).toBeNull()
-  } finally {
-    await f.cleanup()
-  }
-})
-
-test("update_goal cannot raise the budget of a breached goal or resurrect a cancelled one", async () => {
-  const f = await fixture()
-  try {
-    await f.goal("create_goal", {
-      objective: "ship release",
-      limits: { maxCost: 0.1, maxTokens: 50 },
-    })
-    f.store.accrueSnapshot("ses_owner", snapshot(0.05, 10))
-    f.store.accrueSnapshot("ses_owner", snapshot(0.16, 80))
-    expect((await f.goal("get_goal", {})).goal).toMatchObject({ limitExceeded: "cost" })
-    // A breached goal stays breached: rewriting the objective with a bigger
-    // budget must not silently re-arm it with a fresh continuation budget.
-    await expect(
-      f.tool("update_goal").execute(
-        {
-          objective: "ship release with a larger budget",
-          limits: { maxCost: 10, maxTokens: 500 },
-        },
-        { sessionID: "ses_owner" },
-      ),
-    ).rejects.toThrow("limit-exceeded: cost")
-    const breached = f.store.get("ses_owner")
-    expect(breached).toMatchObject({
-      status: "paused",
-      limitExceeded: "cost",
-      limits: { maxCost: 0.1, maxTokens: 50 },
-    })
-    // Lifetime counters survive the refused rewrite, so usage cannot be laundered.
-    expect(breached?.costUsed).toBeCloseTo(0.11, 10)
-    expect(breached?.tokensUsed).toBe(70)
-    expect(breached?.continuations).toBe(0)
-    await f.goal("update_goal", { status: "cancelled" })
-    await expect(
-      f.tool("update_goal").execute(
-        { objective: "start over", status: "active" },
-        {
-          sessionID: "ses_owner",
-        },
-      ),
-    ).rejects.toThrow("cancelled goal is terminal")
-    await expect(
-      f.tool("update_goal").execute({ objective: "start over" }, { sessionID: "ses_owner" }),
-    ).rejects.toThrow("cancelled goal is terminal")
-    expect((await f.goal("get_goal", {})).goal).toMatchObject({ status: "cancelled" })
-  } finally {
-    await f.cleanup()
-  }
-})
-
-test("update_goal cancellation is terminal for every later status change", async () => {
-  const f = await fixture()
-  try {
-    await f.goal("create_goal", { objective: "ship release" })
-    expect((await f.goal("update_goal", { status: "cancelled" })).goal).toMatchObject({
-      status: "cancelled",
-    })
-    for (const status of ["active", "paused", "complete"]) {
+])(
+  "create_goal refuses a %s budget without writing the goal",
+  async (_name: string, limits: unknown) => {
+    const f = await fixture()
+    try {
       await expect(
-        f.tool("update_goal").execute({ status }, { sessionID: "ses_owner" }),
+        f
+          .tool("create_goal")
+          .execute({ objective: "ship release", limits }, { sessionID: "ses_owner" }),
+      ).rejects.toThrow("invalid-limits")
+      expect(f.store.get("ses_owner")).toBeNull()
+      expect(
+        await readFile(join(goalDirectory(f.stateDir), "ses_owner.json"), "utf8").catch(() => null),
+      ).toBeNull()
+    } finally {
+      await f.cleanup()
+    }
+  },
+  { timeout: 30000 },
+)
+
+test(
+  "update_goal cannot raise the budget of a breached goal or resurrect a cancelled one",
+  async () => {
+    const f = await fixture()
+    try {
+      await f.goal("create_goal", {
+        objective: "ship release",
+        limits: { maxCost: 0.1, maxTokens: 50 },
+      })
+      f.store.accrueSnapshot("ses_owner", snapshot(0.05, 10))
+      f.store.accrueSnapshot("ses_owner", snapshot(0.16, 80))
+      expect((await f.goal("get_goal", {})).goal).toMatchObject({ limitExceeded: "cost" })
+      // A breached goal stays breached: rewriting the objective with a bigger
+      // budget must not silently re-arm it with a fresh continuation budget.
+      await expect(
+        f.tool("update_goal").execute(
+          {
+            objective: "ship release with a larger budget",
+            limits: { maxCost: 10, maxTokens: 500 },
+          },
+          { sessionID: "ses_owner" },
+        ),
+      ).rejects.toThrow("limit-exceeded: cost")
+      const breached = f.store.get("ses_owner")
+      expect(breached).toMatchObject({
+        status: "paused",
+        limitExceeded: "cost",
+        limits: { maxCost: 0.1, maxTokens: 50 },
+      })
+      // Lifetime counters survive the refused rewrite, so usage cannot be laundered.
+      expect(breached?.costUsed).toBeCloseTo(0.11, 10)
+      expect(breached?.tokensUsed).toBe(70)
+      expect(breached?.continuations).toBe(0)
+      await f.goal("update_goal", { status: "cancelled" })
+      await expect(
+        f.tool("update_goal").execute(
+          { objective: "start over", status: "active" },
+          {
+            sessionID: "ses_owner",
+          },
+        ),
       ).rejects.toThrow("cancelled goal is terminal")
+      await expect(
+        f.tool("update_goal").execute({ objective: "start over" }, { sessionID: "ses_owner" }),
+      ).rejects.toThrow("cancelled goal is terminal")
+      expect((await f.goal("get_goal", {})).goal).toMatchObject({ status: "cancelled" })
+    } finally {
+      await f.cleanup()
     }
-    expect((await f.goal("get_goal", {})).goal).toMatchObject({ status: "cancelled" })
-    // Cancelling again stays allowed so repeated cleanup cannot fail.
-    expect((await f.goal("update_goal", { status: "cancelled" })).goal).toMatchObject({
-      status: "cancelled",
-    })
-  } finally {
-    await f.cleanup()
-  }
-})
+  },
+  { timeout: 30000 },
+)
 
-test("update_goal recovery resolves an unresolved admission and rejects unknown dispositions", async () => {
-  const f = await fixture()
-  try {
-    await f.goal("create_goal", { objective: "ship release" })
-    f.store.noteContinuation("ses_owner")
-    expect((await f.goal("get_goal", {})).goal).toMatchObject({ continuationPending: true })
-    await expect(
-      f.tool("update_goal").execute({ status: "active" }, { sessionID: "ses_owner" }),
-    ).rejects.toThrow("unresolved-continuation")
-    expect((await f.goal("update_goal", { recover: "abandon" })).goal).toMatchObject({
-      status: "paused",
-      continuationPending: false,
-    })
-    // Recovery resolves the admission and never re-arms the continuation budget,
-    // so a breach refusal cannot be side-stepped through `recover`.
-    f.store.noteContinuation("ses_owner")
-    expect((await f.goal("update_goal", { recover: "retry" })).goal).toMatchObject({
-      continuationPending: false,
-      continuations: 1,
-      status: "paused",
-    })
-    await expect(
-      f.tool("update_goal").execute({ recover: "sideways" }, { sessionID: "ses_owner" }),
-    ).rejects.toThrow("invalid-recovery-disposition")
-    expect(f.store.get("ses_owner")?.continuations).toBe(1)
-  } finally {
-    await f.cleanup()
-  }
-})
-
-test("budget, cancellation and recovery stay inside the native session", async () => {
-  const f = await fixture()
-  try {
-    f.store.set("ses_victim", "victim objective", { maxCost: 1 })
-    // Snapshot the victim's stored objective — used to verify the record is
-    // unchanged after a foreign-session attempt.
-    const victimSnapshot = f.store.get("ses_victim")?.objective ?? null
-    for (const [name, input] of [
-      [
-        "create_goal",
-        { objective: "attacker objective", limits: { maxCost: 9 }, session_id: "ses_victim" },
-      ],
-      ["update_goal", { status: "cancelled", session_id: "ses_victim" }],
-      ["update_goal", { recover: "abandon", session_id: "ses_victim" }],
-      ["update_goal", { limits: { maxTokens: 1 }, session_id: "ses_victim" }],
-    ] as const) {
-      const result = await f.tool(name).execute(input, { sessionID: "ses_caller" })
-      expect(result.output).toMatch(/Error:.*foreign-session/)
+test(
+  "update_goal cancellation is terminal for every later status change",
+  async () => {
+    const f = await fixture()
+    try {
+      await f.goal("create_goal", { objective: "ship release" })
+      expect((await f.goal("update_goal", { status: "cancelled" })).goal).toMatchObject({
+        status: "cancelled",
+      })
+      for (const status of ["active", "paused", "complete"]) {
+        await expect(
+          f.tool("update_goal").execute({ status }, { sessionID: "ses_owner" }),
+        ).rejects.toThrow("cancelled goal is terminal")
+      }
+      expect((await f.goal("get_goal", {})).goal).toMatchObject({ status: "cancelled" })
+      // Cancelling again stays allowed so repeated cleanup cannot fail.
+      expect((await f.goal("update_goal", { status: "cancelled" })).goal).toMatchObject({
+        status: "cancelled",
+      })
+    } finally {
+      await f.cleanup()
     }
-    expect(f.store.get("ses_victim")?.objective).toBe(victimSnapshot as string | undefined)
-    expect(f.store.get("ses_caller")).toBeNull()
-    const anonymous = await f.tool("create_goal").execute({ limits: { maxCost: 1 } }, {})
-    expect(anonymous.output).toMatch(/Error:.*session.*identity/)
-    expect(f.store.get("ses_caller")).toBeNull()
-  } finally {
-    await f.cleanup()
-  }
-})
+  },
+  { timeout: 30000 },
+)
+
+test(
+  "update_goal recovery resolves an unresolved admission and rejects unknown dispositions",
+  async () => {
+    const f = await fixture()
+    try {
+      await f.goal("create_goal", { objective: "ship release" })
+      f.store.noteContinuation("ses_owner")
+      expect((await f.goal("get_goal", {})).goal).toMatchObject({ continuationPending: true })
+      await expect(
+        f.tool("update_goal").execute({ status: "active" }, { sessionID: "ses_owner" }),
+      ).rejects.toThrow("unresolved-continuation")
+      expect((await f.goal("update_goal", { recover: "abandon" })).goal).toMatchObject({
+        status: "paused",
+        continuationPending: false,
+      })
+      // Recovery resolves the admission and never re-arms the continuation budget,
+      // so a breach refusal cannot be side-stepped through `recover`.
+      f.store.noteContinuation("ses_owner")
+      expect((await f.goal("update_goal", { recover: "retry" })).goal).toMatchObject({
+        continuationPending: false,
+        continuations: 1,
+        status: "paused",
+      })
+      await expect(
+        f.tool("update_goal").execute({ recover: "sideways" }, { sessionID: "ses_owner" }),
+      ).rejects.toThrow("invalid-recovery-disposition")
+      expect(f.store.get("ses_owner")?.continuations).toBe(1)
+    } finally {
+      await f.cleanup()
+    }
+  },
+  { timeout: 30000 },
+)
+
+test(
+  "budget, cancellation and recovery stay inside the native session",
+  async () => {
+    const f = await fixture()
+    try {
+      f.store.set("ses_victim", "victim objective", { maxCost: 1 })
+      // Snapshot the victim's stored objective — used to verify the record is
+      // unchanged after a foreign-session attempt.
+      const victimSnapshot = f.store.get("ses_victim")?.objective ?? null
+      for (const [name, input] of [
+        [
+          "create_goal",
+          { objective: "attacker objective", limits: { maxCost: 9 }, session_id: "ses_victim" },
+        ],
+        ["update_goal", { status: "cancelled", session_id: "ses_victim" }],
+        ["update_goal", { recover: "abandon", session_id: "ses_victim" }],
+        ["update_goal", { limits: { maxTokens: 1 }, session_id: "ses_victim" }],
+      ] as const) {
+        const result = await f.tool(name).execute(input, { sessionID: "ses_caller" })
+        expect(result.output).toMatch(/Error:.*foreign-session/)
+      }
+      expect(f.store.get("ses_victim")?.objective).toBe(victimSnapshot as string | undefined)
+      expect(f.store.get("ses_caller")).toBeNull()
+      const anonymous = await f.tool("create_goal").execute({ limits: { maxCost: 1 } }, {})
+      expect(anonymous.output).toMatch(/Error:.*session.*identity/)
+      expect(f.store.get("ses_caller")).toBeNull()
+    } finally {
+      await f.cleanup()
+    }
+  },
+  { timeout: 30000 },
+)
 
 test("omo-goal exposes cancel and recover next to the existing verbs", async () => {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-limits-cmd-"))

@@ -7,8 +7,6 @@ import { goalDirectory, openGoalStore } from "../../src/goal/store"
 import { mountGoal } from "../../src/goal/tools"
 import { rmRetry } from "../unit/test-utils"
 
-test.timeout = 30000
-
 type ToolRecord = {
   name: string
   options: { namespace?: string; permission?: string }
@@ -87,59 +85,71 @@ const cases = [
 ] as const
 
 for (const { name, input, permission } of cases) {
-  test(`${name} rejects foreign-session access without changing the victim`, async () => {
-    const f = await fixture()
-    try {
-      const before = await f.victimBytes()
-      const result = await f
-        .tool(name)
-        .execute({ ...input, session_id: "ses_victim" }, { sessionID: "ses_caller" })
-      expect(await f.victimBytes()).toBe(before)
-      expect(result.output).toMatch(/Error:.*foreign-session/)
-      expect(result.output).not.toContain("Private victim objective")
-      expect(f.store.get("ses_caller")).toBeNull()
-    } finally {
-      await f.cleanup()
-    }
-  })
-
-  for (const sessionID of [undefined, "", "   "]) {
-    test(`${name} fails closed without native identity (${JSON.stringify(sessionID)})`, async () => {
+  test(
+    `${name} rejects foreign-session access without changing the victim`,
+    async () => {
       const f = await fixture()
       try {
         const before = await f.victimBytes()
         const result = await f
           .tool(name)
-          .execute({ ...input, session_id: "ses_victim" }, { sessionID })
-        expect(result.output).toMatch(/Error:.*session.*identity/)
+          .execute({ ...input, session_id: "ses_victim" }, { sessionID: "ses_caller" })
         expect(await f.victimBytes()).toBe(before)
+        expect(result.output).toMatch(/Error:.*foreign-session/)
         expect(result.output).not.toContain("Private victim objective")
+        expect(f.store.get("ses_caller")).toBeNull()
       } finally {
         await f.cleanup()
       }
-    })
+    },
+    { timeout: 30000 },
+  )
+
+  for (const sessionID of [undefined, "", "   "]) {
+    test(
+      `${name} fails closed without native identity (${JSON.stringify(sessionID)})`,
+      async () => {
+        const f = await fixture()
+        try {
+          const before = await f.victimBytes()
+          const result = await f
+            .tool(name)
+            .execute({ ...input, session_id: "ses_victim" }, { sessionID })
+          expect(result.output).toMatch(/Error:.*session.*identity/)
+          expect(await f.victimBytes()).toBe(before)
+          expect(result.output).not.toContain("Private victim objective")
+        } finally {
+          await f.cleanup()
+        }
+      },
+      { timeout: 30000 },
+    )
   }
 
   for (const explicit of [false, true]) {
-    test(`${name} preserves self access (${explicit ? "explicit" : "implicit"}) and its permission gate`, async () => {
-      const f = await fixture()
-      try {
-        f.store.set("ses_caller", "Caller objective")
-        const result = await f
-          .tool(name)
-          .execute(
-            { ...input, ...(explicit ? { session_id: "ses_caller" } : {}) },
-            { sessionID: "ses_caller" },
-          )
-        const { goal } = JSON.parse(result.output)
-        expect(goal.sessionID).toBe("ses_caller")
-        expect(goal.objective).toBe(name === "get_goal" ? "Caller objective" : input.objective)
-        expect(goal.status).toBe(name === "update_goal" ? "complete" : "active")
-        expect(f.tool(name).options).toEqual({ namespace: "omo", permission })
-        expect(f.store.get("ses_victim")?.objective).toBe("Private victim objective")
-      } finally {
-        await f.cleanup()
-      }
-    })
+    test(
+      `${name} preserves self access (${explicit ? "explicit" : "implicit"}) and its permission gate`,
+      async () => {
+        const f = await fixture()
+        try {
+          f.store.set("ses_caller", "Caller objective")
+          const result = await f
+            .tool(name)
+            .execute(
+              { ...input, ...(explicit ? { session_id: "ses_caller" } : {}) },
+              { sessionID: "ses_caller" },
+            )
+          const { goal } = JSON.parse(result.output)
+          expect(goal.sessionID).toBe("ses_caller")
+          expect(goal.objective).toBe(name === "get_goal" ? "Caller objective" : input.objective)
+          expect(goal.status).toBe(name === "update_goal" ? "complete" : "active")
+          expect(f.tool(name).options).toEqual({ namespace: "omo", permission })
+          expect(f.store.get("ses_victim")?.objective).toBe("Private victim objective")
+        } finally {
+          await f.cleanup()
+        }
+      },
+      { timeout: 30000 },
+    )
   }
 }

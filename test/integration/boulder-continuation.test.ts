@@ -101,7 +101,7 @@ async function waitFor(what: string, ready: () => boolean): Promise<void> {
 
 test("a continuation prompt carries the live boulder work context", async () => {
   const root = await mkdtemp(join(tmpdir(), "omo-boulder-continuation-"))
-  let context: ReturnType<typeof openBoulderContext>
+  let context: ReturnType<typeof openBoulderContext> | null = null
   try {
     await writeFile(join(root, "plan.md"), "- [x] Investigate\n- [ ] Ship the gate\n")
     context = openBoulderContext(root)
@@ -131,7 +131,7 @@ test("a continuation prompt carries the live boulder work context", async () => 
 
 test("a session without live work keeps the plain continuation prompt", async () => {
   const root = await mkdtemp(join(tmpdir(), "omo-boulder-continuation-"))
-  let context: ReturnType<typeof openBoulderContext>
+  let context: ReturnType<typeof openBoulderContext> | null = null
   try {
     await writeFile(join(root, "plan.md"), "- [ ] Ship\n")
     context = openBoulderContext(root)

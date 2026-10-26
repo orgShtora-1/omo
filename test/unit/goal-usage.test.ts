@@ -76,24 +76,26 @@ test("a report below the baseline rebases without subtracting lifetime usage", (
   }
 })
 
-test("the baseline survives reopening so a restart cannot recount earlier usage", {
-  timeout: 30000,
-}, () => {
-  const { dir, store, cleanup } = tempStore()
-  try {
-    store.set("s", "Ship parity gate")
-    store.accrueSnapshot("s", snapshot(1, 400, 100, 20))
-    store.accrueSnapshot("s", snapshot(1.2, 500, 120, 25))
-    const reopened = openGoalStore(dir)
-    const afterRestart = reopened.accrueSnapshot("s", snapshot(1.3, 600, 140, 30))
-    expect(afterRestart?.costUsed).toBeCloseTo(0.3)
-    // 125 accrued before the reopen plus 125 after it, never the full baseline twice.
-    expect(afterRestart?.tokensUsed).toBe(2 * (100 + 20 + 5))
-    reopened.close()
-  } finally {
-    cleanup()
-  }
-})
+test(
+  "the baseline survives reopening so a restart cannot recount earlier usage",
+  () => {
+    const { dir, store, cleanup } = tempStore()
+    try {
+      store.set("s", "Ship parity gate")
+      store.accrueSnapshot("s", snapshot(1, 400, 100, 20))
+      store.accrueSnapshot("s", snapshot(1.2, 500, 120, 25))
+      const reopened = openGoalStore(dir)
+      const afterRestart = reopened.accrueSnapshot("s", snapshot(1.3, 600, 140, 30))
+      expect(afterRestart?.costUsed).toBeCloseTo(0.3)
+      // 125 accrued before the reopen plus 125 after it, never the full baseline twice.
+      expect(afterRestart?.tokensUsed).toBe(2 * (100 + 20 + 5))
+      reopened.close()
+    } finally {
+      cleanup()
+    }
+  },
+  { timeout: 30000 },
+)
 
 test("cumulative reports without a goal create no baseline record", () => {
   const { store, cleanup } = tempStore()

@@ -8,8 +8,6 @@ import { goalDirectory, openGoalStore } from "../../src/goal/store"
 import { mountGoal } from "../../src/goal/tools"
 import { rmRetry } from "../unit/test-utils"
 
-test.timeout = 30000
-
 type ToolRecord = {
   name: string
   description: string

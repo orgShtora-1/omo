@@ -212,17 +212,17 @@ test.each(["limit-value", "limit-dimension", "status"])(
 
 test("limits survive reopening the store so a restart cannot re-arm the budget", async () => {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-limits-"))
-  let first: GoalStore
-  let reopened: GoalStore
+  let first: GoalStore | null = null
+  let reopened: GoalStore | null = null
   try {
     first = openGoalStore(dir)
     first.set(session, "ship release", { maxCost: 0.1 })
     first.accrueSnapshot(session, snapshot(0.05, 10))
     first.accrueSnapshot(session, snapshot(0.16, 20))
     reopened = openGoalStore(dir) as GoalStore
-    expect(reopened.get(session)?.limits).toEqual({ maxCost: 0.1 })
-    expect(reopened.get(session)?.limitExceeded).toBe("cost")
-    expect(() => reopened.resume(session)).toThrow("limit-exceeded: cost")
+    expect(reopened?.get(session)?.limits).toEqual({ maxCost: 0.1 })
+    expect(reopened?.get(session)?.limitExceeded).toBe("cost")
+    expect(() => reopened?.resume(session)).toThrow("limit-exceeded: cost")
   } finally {
     first?.close()
     reopened?.close()

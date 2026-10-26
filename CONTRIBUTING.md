@@ -165,7 +165,7 @@ bun run check
 
 ### Windows Testing
 
-OmO is Windows production-ready as of v0.3.0. When adding tests that interact with the filesystem or SQLite:
+OmO is Windows production-ready as of v0.2.0. When adding tests that interact with the filesystem or SQLite:
 
 - Use `rmRetry` / `rmSyncRetry` from `test/unit/test-utils.ts` for directory cleanup (handles EBUSY)
 - Call `store.close()` on `BoulderStore` and `GoalStore` before temp directory cleanup

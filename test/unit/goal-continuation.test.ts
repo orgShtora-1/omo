@@ -305,74 +305,78 @@ test("ambiguous prompt failure consumes its reservation and pauses instead of re
   }
 })
 
-test("concurrent idle events reserve one continuation before prompt admission", {
-  timeout: 30000,
-}, async () => {
-  const { dir, store, cleanup } = tempStore()
-  let release = () => {}
-  const admitted = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  try {
-    store.set("s", "Ship parity gate")
-    let calls = 0
-    const continuation = createGoalContinuation({
-      store,
-      prompt: async () => {
-        calls++
-        await admitted
-      },
+test(
+  "concurrent idle events reserve one continuation before prompt admission",
+  async () => {
+    const { dir, store, cleanup } = tempStore()
+    let release = () => {}
+    const admitted = new Promise<void>((resolve) => {
+      release = resolve
     })
-    const first = continuation.handleEvent({ type: "session.idle", data: { sessionID: "s" } })
-    const second = continuation.handleEvent({ type: "session.idle", data: { sessionID: "s" } })
-    expect(calls).toBe(1)
-    const verifyStore = openGoalStore(dir)
-    expect(verifyStore.get("s")?.continuations).toBe(1)
-    verifyStore.close()
-    release()
-    expect(await first).toEqual({ continued: true, sessionID: "s" })
-    expect(await second).toEqual({ continued: false })
-  } finally {
-    release()
-    cleanup()
-  }
-})
+    try {
+      store.set("s", "Ship parity gate")
+      let calls = 0
+      const continuation = createGoalContinuation({
+        store,
+        prompt: async () => {
+          calls++
+          await admitted
+        },
+      })
+      const first = continuation.handleEvent({ type: "session.idle", data: { sessionID: "s" } })
+      const second = continuation.handleEvent({ type: "session.idle", data: { sessionID: "s" } })
+      expect(calls).toBe(1)
+      const verifyStore = openGoalStore(dir)
+      expect(verifyStore.get("s")?.continuations).toBe(1)
+      verifyStore.close()
+      release()
+      expect(await first).toEqual({ continued: true, sessionID: "s" })
+      expect(await second).toEqual({ continued: false })
+    } finally {
+      release()
+      cleanup()
+    }
+  },
+  { timeout: 30000 },
+)
 
-test("reopened continuation pauses an unresolved admission instead of submitting again", {
-  timeout: 30000,
-}, async () => {
-  const { dir, store, cleanup } = tempStore()
-  let release = () => {}
-  const admitted = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  try {
-    store.set("s", "Ship parity gate")
-    const firstService = createGoalContinuation({ store, prompt: async () => admitted })
-    const first = firstService.handleEvent({ type: "session.idle", data: { sessionID: "s" } })
-    let retries = 0
-    const reopened = openGoalStore(dir)
-    const recovered = createGoalContinuation({
-      store: reopened,
-      prompt: async () => {
-        retries++
-      },
+test(
+  "reopened continuation pauses an unresolved admission instead of submitting again",
+  async () => {
+    const { dir, store, cleanup } = tempStore()
+    let release = () => {}
+    const admitted = new Promise<void>((resolve) => {
+      release = resolve
     })
-    expect(await recovered.handleEvent({ type: "session.idle", data: { sessionID: "s" } })).toEqual(
-      { continued: false },
-    )
-    expect(retries).toBe(0)
-    expect(reopened.get("s")?.status).toBe("paused")
-    expect(reopened.get("s")?.continuations).toBe(1)
-    release()
-    await first
-    expect(reopened.get("s")?.status).toBe("paused")
-    reopened.close()
-  } finally {
-    release()
-    cleanup()
-  }
-})
+    try {
+      store.set("s", "Ship parity gate")
+      const firstService = createGoalContinuation({ store, prompt: async () => admitted })
+      const first = firstService.handleEvent({ type: "session.idle", data: { sessionID: "s" } })
+      let retries = 0
+      const reopened = openGoalStore(dir)
+      const recovered = createGoalContinuation({
+        store: reopened,
+        prompt: async () => {
+          retries++
+        },
+      })
+      expect(
+        await recovered.handleEvent({ type: "session.idle", data: { sessionID: "s" } }),
+      ).toEqual({ continued: false })
+      expect(retries).toBe(0)
+      expect(reopened.get("s")?.status).toBe("paused")
+      expect(reopened.get("s")?.continuations).toBe(1)
+      release()
+      await first
+      expect(reopened.get("s")?.status).toBe("paused")
+      reopened.close()
+    } finally {
+      release()
+      cleanup()
+    }
+  },
+  { timeout: 30000 },
+)
 
 test("continuation rejects unbounded or invalid configured limits", () => {
   const { store, cleanup } = tempStore()
@@ -389,8 +393,7 @@ test("continuation rejects unbounded or invalid configured limits", () => {
 
 test.each([false, true])(
   "stale admission failure=%s cannot settle a rearmed continuation",
-  { timeout: 30000 },
-  async (failed) => {
+  async (failed: boolean) => {
     const { dir, store, cleanup } = tempStore()
     let releaseFirst = () => {}
     let releaseSecond = () => {}
@@ -433,4 +436,5 @@ test.each([false, true])(
       cleanup()
     }
   },
+  { timeout: 30000 },
 )

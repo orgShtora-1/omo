@@ -139,25 +139,29 @@ describe("journal indexes - unresolved", () => {
 })
 
 describe("journal indexes - performance under load", () => {
-  test("intent remains fast with many records", { timeout: 30000 }, () => {
-    const { journal, cleanup } = fixture()
-    try {
-      // Create 500 completed records (reduced for Windows performance)
-      for (let i = 0; i < 500; i++) {
-        const req = makeRequest(`task-${i}`)
-        const res = makeResolved()
-        journal.intent(`attempt-${i}`, req, res)
-        journal.terminal(`attempt-${i}`, "completed")
+  test(
+    "intent remains fast with many records",
+    () => {
+      const { journal, cleanup } = fixture()
+      try {
+        // Create 500 completed records (reduced for Windows performance)
+        for (let i = 0; i < 500; i++) {
+          const req = makeRequest(`task-${i}`)
+          const res = makeResolved()
+          journal.intent(`attempt-${i}`, req, res)
+          journal.terminal(`attempt-${i}`, "completed")
+        }
+        // Now a new intent should still be fast
+        const start = performance.now()
+        const newReq = makeRequest("new-task")
+        journal.intent("new-attempt", newReq, makeResolved())
+        const elapsed = performance.now() - start
+        // Should be well under 100ms even with 500 records (Windows can be slower)
+        expect(elapsed).toBeLessThan(100)
+      } finally {
+        cleanup()
       }
-      // Now a new intent should still be fast
-      const start = performance.now()
-      const newReq = makeRequest("new-task")
-      journal.intent("new-attempt", newReq, makeResolved())
-      const elapsed = performance.now() - start
-      // Should be well under 100ms even with 500 records (Windows can be slower)
-      expect(elapsed).toBeLessThan(100)
-    } finally {
-      cleanup()
-    }
-  })
+    },
+    { timeout: 30000 },
+  )
 })

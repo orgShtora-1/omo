@@ -58,7 +58,7 @@ test("boulder tools enforce native project ownership and separate read/edit gate
       },
     },
   } as unknown as Plugin.Context
-  let dispose: () => Promise<void>
+  let dispose = async () => {}
   try {
     writeFileSync(join(root, "plan.md"), "- [ ] remaining\n")
     await mountBoulder(ctx, root, false)

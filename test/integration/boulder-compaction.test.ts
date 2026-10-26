@@ -89,7 +89,7 @@ async function waitFor(what: string, ready: () => boolean): Promise<void> {
 
 test("compaction refreshes only the compacting session's own live work", async () => {
   const root = await mkdtemp(join(tmpdir(), "omo-boulder-compaction-"))
-  let context: ReturnType<typeof openBoulderContext>
+  let context: ReturnType<typeof openBoulderContext> | null = null
   try {
     await writeFile(join(root, "plan.md"), "- [ ] Ship\n")
     let now = Date.parse("2026-03-01T00:00:00.000Z")
@@ -100,15 +100,15 @@ test("compaction refreshes only the compacting session's own live work", async (
       const update = host.tools.find((tool) => tool.name === "boulder_update")
       if (!update) throw new Error("missing boulder_update")
       await update.execute({ action: "start", plan: "plan.md" }, { sessionID: "ses_live" })
-      const before = context.store.get("ses_live")
+      const before = context?.store.get("ses_live")
       if (!before) throw new Error("missing work")
       now += 5_000
       host.push({ type: "session.compaction.ended", data: { sessionID: "ses_live" } })
       await waitFor(
         "refreshed work",
-        () => context.store.get("ses_live")?.updatedAt !== before.updatedAt,
+        () => context?.store.get("ses_live")?.updatedAt !== before.updatedAt,
       )
-      const after = context.store.get("ses_live")
+      const after = context?.store.get("ses_live")
       expect(after?.updatedAt).not.toBe(before.updatedAt)
       expect(after?.status).toBe("active")
       // A foreign session id must never refresh this session's records.
@@ -118,12 +118,12 @@ test("compaction refreshes only the compacting session's own live work", async (
       host.push({ type: "session.compaction.ended", data: {} })
       host.push({ type: "session.idle", data: { sessionID: "ses_live" } })
       await new Promise((resolve) => setTimeout(resolve, 60))
-      expect(context.store.get("ses_live")?.updatedAt).toBe(refreshed)
+      expect(context?.store.get("ses_live")?.updatedAt).toBe(refreshed)
       // Compaction is a liveness signal: it does not clear a sweep's stale flag.
       now += 10_000
       host.push({ type: "session.compaction.ended", data: { sessionID: "ses_live" } })
-      await waitFor("second refresh", () => context.store.get("ses_live")?.updatedAt !== refreshed)
-      expect(context.store.get("ses_live")?.stale).toBeUndefined()
+      await waitFor("second refresh", () => context?.store.get("ses_live")?.updatedAt !== refreshed)
+      expect(context?.store.get("ses_live")?.stale).toBeUndefined()
     } finally {
       await dispose()
     }
@@ -135,19 +135,19 @@ test("compaction refreshes only the compacting session's own live work", async (
 
 test("a disabled boulder mount never subscribes or refreshes", async () => {
   const root = await mkdtemp(join(tmpdir(), "omo-boulder-compaction-"))
-  let context: ReturnType<typeof openBoulderContext>
+  let context: ReturnType<typeof openBoulderContext> | null = null
   try {
     await writeFile(join(root, "plan.md"), "- [ ] Ship\n")
     context = openBoulderContext(root)
     context.store.start("ses_live", "plan.md")
     const before = context.store.get("ses_live")?.updatedAt
     const host = fixture(root)
-    const dispose = await mountBoulder(host.ctx, root, false, context.store)
+    const dispose = await mountBoulder(host.ctx, root, false, context?.store)
     try {
       expect(host.tools).toHaveLength(0)
       host.push({ type: "session.compaction.ended", data: { sessionID: "ses_live" } })
       await new Promise((resolve) => setTimeout(resolve, 30))
-      expect(context.store.get("ses_live")?.updatedAt).toBe(before)
+      expect(context?.store.get("ses_live")?.updatedAt).toBe(before)
     } finally {
       await dispose()
     }
