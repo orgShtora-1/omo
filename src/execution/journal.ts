@@ -9,6 +9,8 @@ export type RunRecord = {
   notification?: "pending" | "sent"
   notificationBatch?: string
   error?: string
+  /** Root cause reason for failure/cancellation/block; free text for diagnostics. */
+  reason?: string
   updatedAt: number
   startedAt?: number
   finishedAt?: number
@@ -46,7 +48,7 @@ export function openRunJournal(path: string) {
   const hasActive = db.query<{ "1": number }, [string, string]>(
     "SELECT 1 FROM omo_runs WHERE json_extract(payload, '$.request.parentSessionID') = ? AND json_extract(payload, '$.request.taskID') = ? AND json_extract(payload, '$.phase') IN ('intent','prepared','admitted','blocked') LIMIT 1",
   )
-  const activeRows = db.query<{ payload: string }, [string, string]>(
+  const _activeRows = db.query<{ payload: string }, [string, string]>(
     "SELECT payload FROM omo_runs WHERE json_extract(payload, '$.request.parentSessionID') = ? AND json_extract(payload, '$.request.taskID') = ? AND json_extract(payload, '$.phase') IN ('intent','prepared','admitted','blocked') ORDER BY json_extract(payload, '$.updatedAt') DESC",
   )
   const unresolvedRows = db.query<{ payload: string }, []>(
@@ -78,7 +80,12 @@ export function openRunJournal(path: string) {
     admitted(attemptID: string) {
       return update(attemptID, { phase: "admitted" })
     },
-    terminal(attemptID: string, phase: "completed" | "failed" | "cancelled", error?: string) {
+    terminal(
+      attemptID: string,
+      phase: "completed" | "failed" | "cancelled",
+      error?: string,
+      reason?: string,
+    ) {
       return db
         .transaction(() => {
           const current = read(attemptID)
@@ -87,6 +94,7 @@ export function openRunJournal(path: string) {
             phase,
             finishedAt: current.finishedAt ?? Date.now(),
             ...(error ? { error } : {}),
+            ...(reason ? { reason } : {}),
           })
         })
         .immediate()

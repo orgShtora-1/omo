@@ -1,17 +1,6 @@
-import type { ErrorLogEntry } from "./logging.js"
-import { ERROR_CODES, type ErrorCode, errorCodeCategory, isErrorCode } from "./registry.js"
+import type { ErrorCode } from "./registry.js"
 
-export {
-  disableStructuredLogging,
-  enableStructuredLogging,
-  logError,
-  logInfo,
-  logWarning,
-} from "./logging.js"
-
-// Re-export all registry helpers for convenience
-export { ERROR_CODES, type ErrorCode, errorCodeCategory, isErrorCode }
-
+export type { ErrorCode }
 export type ErrorDetails = Record<string, unknown> | undefined
 
 export class OmoError extends Error {

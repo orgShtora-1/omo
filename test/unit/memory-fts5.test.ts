@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { openMemoryStore } from "../../src/memory/store"
+import { rmSyncRetry } from "./test-utils"
 
 const SCOPE_A = JSON.stringify(["shtora.omo.memory", "proj-a", "/work/a"])
 
@@ -16,7 +17,7 @@ function fixture() {
     file,
     cleanup: () => {
       store.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSyncRetry(dir)
     },
   }
 }

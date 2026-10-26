@@ -1,6 +1,6 @@
 {
   "name": "@shtora/omo",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "OpenCode V2 agent orchestration with durable plans, parallel delegation and verification",
   "license": "MIT",
   "author": "shtora",

@@ -1,14 +1,22 @@
 import { expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createGoalContinuation } from "../../src/goal/continuation"
 import { type GoalStore, openGoalStore } from "../../src/goal/store"
+import { rmSyncRetry } from "./test-utils"
 
 function tempStore(): { dir: string; store: GoalStore; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "omo-goal-usage-"))
   const store = openGoalStore(dir)
-  return { dir, store, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+  return {
+    dir,
+    store,
+    cleanup: () => {
+      store.close()
+      rmSyncRetry(dir)
+    },
+  }
 }
 
 const snapshot = (
@@ -68,7 +76,9 @@ test("a report below the baseline rebases without subtracting lifetime usage", (
   }
 })
 
-test("the baseline survives reopening so a restart cannot recount earlier usage", () => {
+test("the baseline survives reopening so a restart cannot recount earlier usage", {
+  timeout: 30000,
+}, () => {
   const { dir, store, cleanup } = tempStore()
   try {
     store.set("s", "Ship parity gate")
@@ -79,6 +89,7 @@ test("the baseline survives reopening so a restart cannot recount earlier usage"
     expect(afterRestart?.costUsed).toBeCloseTo(0.3)
     // 125 accrued before the reopen plus 125 after it, never the full baseline twice.
     expect(afterRestart?.tokensUsed).toBe(2 * (100 + 20 + 5))
+    reopened.close()
   } finally {
     cleanup()
   }

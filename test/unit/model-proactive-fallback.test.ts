@@ -1,14 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import type { Plugin } from "@opencode/plugin"
 import type { FallbackPolicy } from "../../src/config/model-fallback"
 import {
   DEFAULT_PROACTIVE_MODEL_FALLBACK,
-  mountProactiveModelFallback,
   type ProactiveModelFallbackConfig,
   proactiveVerdict,
 } from "../../src/config/model-proactive-fallback"
-import { type ResolvedOptions, resolveOptions } from "../../src/config/resolve"
-import { type OmoOptions, OptionsError, parseOptions } from "../../src/config/schema"
+import { resolveOptions } from "../../src/config/resolve"
+import { OptionsError, parseOptions } from "../../src/config/schema"
 import type { ModelRef } from "../../src/contracts"
 
 const deep: ModelRef = { providerID: "p", modelID: "deep", variant: "high" }

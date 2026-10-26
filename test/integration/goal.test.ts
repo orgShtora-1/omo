@@ -1,10 +1,14 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { parseOptions } from "../../src/config/schema"
+import { goalDirectory, openGoalStore } from "../../src/goal/store"
 import { mountGoal } from "../../src/goal/tools"
+import { rmRetry } from "../unit/test-utils"
+
+test.timeout = 30000
 
 type ToolRecord = {
   name: string
@@ -15,7 +19,7 @@ type ToolRecord = {
   execute(input: Record<string, unknown>, context: unknown): Promise<unknown> | unknown
 }
 
-function fixture(canonical: string) {
+function fixture(canonical: string, store: ReturnType<typeof openGoalStore>) {
   const added: ToolRecord[] = []
   const ctx = {
     location: {
@@ -28,12 +32,19 @@ function fixture(canonical: string) {
       },
     },
     event: {
-      subscribe: (_input: unknown) => {
-        async function* empty(): AsyncGenerator<never> {
-          // No scripted events: the continuation loop stays parked.
-        }
-        return empty()
-      },
+      subscribe: ({ signal }: { signal: AbortSignal }) => ({
+        async *[Symbol.asyncIterator]() {
+          while (!signal.aborted) {
+            await new Promise<void>((resolve) => {
+              const onAbort = () => {
+                signal.removeEventListener("abort", onAbort)
+                resolve()
+              }
+              signal.addEventListener("abort", onAbort, { once: true })
+            })
+          }
+        },
+      }),
     },
     tool: {
       async transform(editor: (editor: unknown) => unknown | Promise<unknown>) {
@@ -46,19 +57,24 @@ function fixture(canonical: string) {
             added.push(record)
           },
         }
-        await editor(target)
+        editor(target)
         return { dispose() {} }
       },
     },
   }
-  return { ctx: ctx as unknown as Plugin.Context, added }
+  return { ctx: ctx as unknown as Plugin.Context, added, store }
 }
 
 async function tempDir() {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-it-"))
+  const store = openGoalStore(goalDirectory(dir))
   return {
     dir,
-    cleanup: () => rm(dir, { recursive: true, force: true }),
+    store,
+    cleanup: async () => {
+      store.close()
+      await rmRetry(dir)
+    },
   }
 }
 
@@ -70,10 +86,12 @@ test("goal_enabled defaults to false in the config schema", () => {
 })
 
 test("mountGoal registers create, update and get tools only when enabled", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { dir, cleanup, store } = await tempDir()
   try {
-    const enabled = fixture(dir)
-    const disposeEnabled = await mountGoal(enabled.ctx, dir, true)
+    const enabled = fixture(dir, store)
+    console.log("About to call mountGoal (enabled)")
+    const disposeEnabled = await mountGoal(enabled.ctx, dir, true, undefined, enabled.store)
+    console.log("mountGoal (enabled) returned")
     expect(enabled.added.map((tool) => tool.name).sort()).toEqual([
       "create_goal",
       "get_goal",
@@ -85,21 +103,29 @@ test("mountGoal registers create, update and get tools only when enabled", async
     expect(createTool?.options).toEqual({ namespace: "omo", permission: "edit" })
     expect(updateTool?.options).toEqual({ namespace: "omo", permission: "edit" })
     expect(getTool?.options).toEqual({ namespace: "omo", permission: "read" })
+    console.log("About to call disposeEnabled")
     await disposeEnabled()
+    console.log("disposeEnabled returned")
 
-    const disabled = fixture(dir)
+    const disabled = fixture(dir, store)
+    console.log("About to call mountGoal (disabled)")
     const disposeDisabled = await mountGoal(disabled.ctx, dir, false)
+    console.log("mountGoal (disabled) returned")
     expect(disabled.added).toHaveLength(0)
+    console.log("About to call disposeDisabled")
     await disposeDisabled()
+    console.log("disposeDisabled returned")
   } finally {
+    console.log("About to call cleanup")
     await cleanup()
+    console.log("cleanup returned")
   }
 })
 
 test("create_goal, update_goal and get_goal round-trip through the tools", async () => {
-  const { dir, cleanup } = await tempDir()
-  const { ctx, added } = fixture(dir)
-  const dispose = await mountGoal(ctx, dir, true)
+  const { dir, cleanup, store } = await tempDir()
+  const { ctx, added } = fixture(dir, store)
+  const dispose = await mountGoal(ctx, dir, true, undefined, store)
   try {
     const createTool = added.find((tool) => tool.name === "create_goal")
     const updateTool = added.find((tool) => tool.name === "update_goal")

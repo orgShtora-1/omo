@@ -23,7 +23,8 @@ import { join } from "node:path"
 // OMO-CHILD-OK verbatim; `opencode run` exit 0.
 const live = process.env.OMO_LIVE === "1" ? test : test.skip
 const MODEL = process.env.OMO_LIVE_MODEL ?? "opencode/deepseek-v4.1-flash-free"
-const PRODUCT = "C:/Users/airshakur88/Documents/GitHub/OmO/hallaxius/omo"
+// Resolve plugin path from test file location: goes up to shtora/omo root
+const PRODUCT = import.meta.dirname ? join(import.meta.dirname, "..", "..") : ""
 
 live(
   "model-driven parent runs two explore children through omo_parallel",

@@ -93,6 +93,8 @@ export type GoalStore = {
   /** Count one automatic idle continuation; null when no goal exists. */
   noteContinuation(sessionID: string): Goal | null
   finishContinuation(sessionID: string, admissionID: string, failed?: boolean): Goal | null
+  /** Close the underlying database connection. */
+  close(): void
 }
 
 const MAX_OBJECTIVE_LENGTH = 2000
@@ -274,7 +276,7 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
       activeSince,
       costUsed: row.cost_used,
       continuations: row.continuations,
-      continuationPending: row.continuation_pending ? true : false,
+      continuationPending: !!row.continuation_pending,
       continuationID: row.continuation_id ?? undefined,
       usageBaseline:
         row.usage_baseline_cost !== null
@@ -396,7 +398,7 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
     return withStatus(goal, "paused", { limitExceeded: exceeded })
   }
 
-  const saveGoal = (sessionID: string, goal: Goal): void => {
+  const saveGoal = (_sessionID: string, goal: Goal): void => {
     upsertGoal.run(
       goal.sessionID,
       goal.objective,
@@ -579,7 +581,7 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
       const current = read(sessionID)
       if (!current) return null
       if (current.continuationID !== admissionID) return current
-      const clockNow = typeof options.now === "function" ? options.now() : Date.now()
+      const _clockNow = typeof options.now === "function" ? options.now() : Date.now()
       const next = withStatus(
         current,
         failed && current.status !== "cancelled" ? "paused" : current.status,
@@ -587,6 +589,9 @@ export function openGoalStore(dir: string, options: { now?: () => number } = {})
       )
       saveGoal(sessionID, next)
       return next
+    },
+    close() {
+      db.close(true)
     },
   }
 }

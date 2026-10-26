@@ -140,6 +140,7 @@ export async function mountRuntime(
     const bound = record.request as BoundRequest
     const planID = bound.planID
     const stepID = bound.stepID
+    let reason: string | undefined
     if (planID && stepID) {
       await serial(async () => {
         const scope = await scopeFor(bound.parentSessionID)
@@ -152,33 +153,41 @@ export async function mountRuntime(
           step.attempts.at(-1)?.attemptID !== record.attemptID
         )
           return
-        const event: PlanEvent =
-          state === "completed"
-            ? {
-                id: `finish:${record.attemptID}`,
-                at: Date.now(),
-                type: "execution-finished",
-                stepID,
-                attemptID: record.attemptID,
-              }
-            : state === "cancelled"
-              ? {
-                  id: `finish:${record.attemptID}`,
-                  at: Date.now(),
-                  type: "cancel",
-                  stepID,
-                }
-              : {
-                  id: `finish:${record.attemptID}`,
-                  at: Date.now(),
-                  type: "fail",
-                  stepID,
-                  reason: "Native child execution failed; inspect session before resume",
-                }
+        let event: PlanEvent
+        if (state === "completed") {
+          event = {
+            id: `finish:${record.attemptID}`,
+            at: Date.now(),
+            type: "execution-finished",
+            stepID,
+            attemptID: record.attemptID,
+          }
+        } else if (state === "cancelled") {
+          event = {
+            id: `finish:${record.attemptID}`,
+            at: Date.now(),
+            type: "cancel",
+            stepID,
+          }
+        } else {
+          event = {
+            id: `finish:${record.attemptID}`,
+            at: Date.now(),
+            type: "fail",
+            stepID,
+            reason: "Native child execution failed; inspect session before resume",
+          }
+        }
+        if (event.type === "fail") reason = event.reason
         await repository.save(scope, transition(plan, event), plan.revision)
       })
     }
-    const terminal = journal.terminal(record.attemptID, state)
+    const terminal = journal.terminal(
+      record.attemptID,
+      state,
+      record.error,
+      reason ?? record.reason,
+    )
     recoveredReservations.get(record.attemptID)?.()
     recoveredReservations.delete(record.attemptID)
     const sessionID = record.sessionID
@@ -404,6 +413,14 @@ export async function mountRuntime(
         getAudits: (skillId) => fetchSkillAudits(skillId, fetch),
         install: (hit) =>
           installSkill({ ...hit, cwd: installCwd, packageManager: options.runtime.packageManager }),
+        confirm: async (text: string) => {
+          const result = await ctx.session.prompt(
+            { sessionID: parentID, text },
+            { signal: new AbortSignal() },
+          )
+          // The host returns the user's response; treat truthy as confirmation
+          return Boolean(result)
+        },
       })
       resolved.installedSkills = coverage.installedSkills
     } catch {
@@ -566,13 +583,23 @@ export async function mountRuntime(
         records.map(async (record) => {
           if (!record.sessionID) {
             // No native work exists; free the taskID so it can be retried.
-            journal.terminal(record.attemptID, "cancelled", "Cancelled before admission")
+            journal.terminal(
+              record.attemptID,
+              "cancelled",
+              "Cancelled before admission",
+              "Cancelled before admission",
+            )
             return
           }
           try {
             await adapter.adopt(record.sessionID, parentID)
           } catch {
-            journal.terminal(record.attemptID, "cancelled", "Cancelled; adoption failed")
+            journal.terminal(
+              record.attemptID,
+              "cancelled",
+              "Cancelled; adoption failed",
+              "Cancelled; adoption failed",
+            )
             return
           }
           await adapter.cancel(record.sessionID)
@@ -584,6 +611,7 @@ export async function mountRuntime(
             journal.terminal(
               record.attemptID,
               "cancelled",
+              "Cancelled; native terminal state not confirmed",
               "Cancelled; native terminal state not confirmed",
             )
             return

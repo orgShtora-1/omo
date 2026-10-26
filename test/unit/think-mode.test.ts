@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import type { Plugin } from "@opencode/plugin"
 import { mountThinkMode } from "../../src/agents/think-mode"
 import type { ProfileConfig } from "../../src/config/schema"
 
@@ -7,7 +8,7 @@ import type { ProfileConfig } from "../../src/config/schema"
 // ---------------------------------------------------------------------------
 
 describe("mountThinkMode", () => {
-  function makeMockCtx(profiles: ProfileConfig[]) {
+  function makeMockCtx(_profiles: ProfileConfig[]) {
     const hookCalls: Array<{ name: string; callback: (input: unknown) => void }> = []
     return {
       hookCalls,
@@ -22,7 +23,7 @@ describe("mountThinkMode", () => {
           }
         },
       },
-    } as unknown as import("@opencode/plugin").Plugin.Context & { hookCalls: typeof hookCalls }
+    } as unknown as Plugin.Context & { hookCalls: typeof hookCalls }
   }
 
   test("injects thinking config when profile has thinkMode enabled", async () => {
@@ -31,7 +32,7 @@ describe("mountThinkMode", () => {
     ]
     const ctx = makeMockCtx(profiles)
     const { hookCalls } = ctx
-    await mountThinkMode(ctx as any, profiles)
+    await mountThinkMode(ctx, profiles)
 
     // Simulate a context hook call for the hephaestus agent
     const hookCall = hookCalls.find((h) => h.name === "context")
@@ -45,7 +46,7 @@ describe("mountThinkMode", () => {
       messages: [],
       options: {} as Record<string, unknown>,
     }
-    hookCall!.callback(input)
+    hookCall?.callback(input)
 
     const providerOptions = (input.options.providerOptions ?? {}) as Record<string, unknown>
     expect(providerOptions.thinking).toEqual({ type: "enabled", budgetTokens: 4096 })
@@ -55,7 +56,7 @@ describe("mountThinkMode", () => {
     const profiles: ProfileConfig[] = [{ id: "hephaestus", mode: "subagent", allowWrite: false }]
     const ctx = makeMockCtx(profiles)
     const { hookCalls } = ctx
-    await mountThinkMode(ctx as any, profiles)
+    await mountThinkMode(ctx, profiles)
 
     // No hook registered when no profile has thinkMode
     const hookCall = hookCalls.find((h) => h.name === "context")
@@ -79,7 +80,7 @@ describe("mountThinkMode", () => {
     ]
     const ctx = makeMockCtx(profiles)
     const { hookCalls } = ctx
-    await mountThinkMode(ctx as any, profiles)
+    await mountThinkMode(ctx, profiles)
 
     const hookCall = hookCalls.find((h) => h.name === "context")
     expect(hookCall).toBeDefined()
@@ -92,7 +93,7 @@ describe("mountThinkMode", () => {
       messages: [],
       options: {} as Record<string, unknown>,
     }
-    hookCall!.callback(input)
+    hookCall?.callback(input)
 
     expect(input.options.providerOptions).toBeUndefined()
   })
@@ -101,7 +102,7 @@ describe("mountThinkMode", () => {
     const profiles: ProfileConfig[] = [{ id: "hephaestus", mode: "subagent", allowWrite: false }]
     const ctx = makeMockCtx(profiles)
     const { hookCalls } = ctx
-    const dispose = await mountThinkMode(ctx as any, profiles)
+    const dispose = await mountThinkMode(ctx, profiles)
 
     expect(hookCalls.length).toBe(0)
     await dispose()
@@ -113,7 +114,7 @@ describe("mountThinkMode", () => {
     ]
     const ctx = makeMockCtx(profiles)
     const { hookCalls } = ctx
-    await mountThinkMode(ctx as any, profiles)
+    await mountThinkMode(ctx, profiles)
 
     const hookCall = hookCalls.find((h) => h.name === "context")
     expect(hookCall).toBeDefined()
@@ -126,7 +127,7 @@ describe("mountThinkMode", () => {
       messages: [],
       options: { providerOptions: { temperature: 0.7 } } as Record<string, unknown>,
     }
-    hookCall!.callback(input)
+    hookCall?.callback(input)
 
     const providerOptions = input.options.providerOptions as Record<string, unknown>
     expect(providerOptions.thinking).toEqual({ type: "enabled", budgetTokens: 4096 })
@@ -139,7 +140,7 @@ describe("mountThinkMode", () => {
     ]
     const ctx = makeMockCtx(profiles)
     const { hookCalls } = ctx
-    await mountThinkMode(ctx as any, profiles)
+    await mountThinkMode(ctx, profiles)
 
     const hookCall = hookCalls.find((h) => h.name === "context")
     const input = {
@@ -150,7 +151,7 @@ describe("mountThinkMode", () => {
       messages: [],
       options: {} as Record<string, unknown>,
     }
-    hookCall!.callback(input)
+    hookCall?.callback(input)
 
     const thinking = (input.options.providerOptions as Record<string, unknown>).thinking as {
       type: string
@@ -168,7 +169,7 @@ describe("mountThinkMode", () => {
     ]
     const ctx = makeMockCtx(profiles)
     const { hookCalls } = ctx
-    await mountThinkMode(ctx as any, profiles)
+    await mountThinkMode(ctx, profiles)
 
     const hookCall = hookCalls.find((h) => h.name === "context")
     expect(hookCall).toBeDefined()
@@ -182,7 +183,7 @@ describe("mountThinkMode", () => {
       messages: [],
       options: {} as Record<string, unknown>,
     }
-    hookCall!.callback(inputThinker)
+    hookCall?.callback(inputThinker)
     expect(
       (inputThinker.options.providerOptions as Record<string, unknown>)?.thinking,
     ).toBeDefined()
@@ -196,7 +197,7 @@ describe("mountThinkMode", () => {
       messages: [],
       options: {} as Record<string, unknown>,
     }
-    hookCall!.callback(inputNonThinker)
+    hookCall?.callback(inputNonThinker)
     expect(inputNonThinker.options.providerOptions).toBeUndefined()
 
     // default agent (no thinkMode) should not get thinking config
@@ -208,7 +209,7 @@ describe("mountThinkMode", () => {
       messages: [],
       options: {} as Record<string, unknown>,
     }
-    hookCall!.callback(inputDefault)
+    hookCall?.callback(inputDefault)
     expect(inputDefault.options.providerOptions).toBeUndefined()
   })
 })

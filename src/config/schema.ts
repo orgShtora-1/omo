@@ -1,4 +1,3 @@
-import { z } from "zod"
 import { profiles as builtinProfiles } from "../agents/prompts"
 import {
   DEFAULT_PREEMPTIVE_COMPACTION,

@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { openBoulderContext } from "../../src/boulder/context"
 import { mountBoulder } from "../../src/boulder/tools"
+import { rmRetry } from "../unit/test-utils"
 
 interface Queued {
   type: string
@@ -88,10 +89,11 @@ async function waitFor(what: string, ready: () => boolean): Promise<void> {
 
 test("compaction refreshes only the compacting session's own live work", async () => {
   const root = await mkdtemp(join(tmpdir(), "omo-boulder-compaction-"))
+  let context: ReturnType<typeof openBoulderContext>
   try {
     await writeFile(join(root, "plan.md"), "- [ ] Ship\n")
     let now = Date.parse("2026-03-01T00:00:00.000Z")
-    const context = openBoulderContext(root, { now: () => now, staleAfterMs: 1000 })
+    context = openBoulderContext(root, { now: () => now, staleAfterMs: 1000 })
     const host = fixture(root)
     const dispose = await mountBoulder(host.ctx, root, true, context.store)
     try {
@@ -126,15 +128,17 @@ test("compaction refreshes only the compacting session's own live work", async (
       await dispose()
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    context?.store.close()
+    await rmRetry(root)
   }
 })
 
 test("a disabled boulder mount never subscribes or refreshes", async () => {
   const root = await mkdtemp(join(tmpdir(), "omo-boulder-compaction-"))
+  let context: ReturnType<typeof openBoulderContext>
   try {
     await writeFile(join(root, "plan.md"), "- [ ] Ship\n")
-    const context = openBoulderContext(root)
+    context = openBoulderContext(root)
     context.store.start("ses_live", "plan.md")
     const before = context.store.get("ses_live")?.updatedAt
     const host = fixture(root)
@@ -148,6 +152,7 @@ test("a disabled boulder mount never subscribes or refreshes", async () => {
       await dispose()
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    context?.store.close()
+    await rmRetry(root)
   }
 })

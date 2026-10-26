@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { goalDirectory, openGoalStore } from "../../src/goal/store"
 import { mountGoal } from "../../src/goal/tools"
+import { rmRetry } from "../unit/test-utils"
+
+test.timeout = 30000
 
 type ToolRecord = {
   name: string
@@ -18,6 +21,7 @@ async function fixture() {
   const canonical = await mkdtemp(join(tempRoot, "omo-goal-ownership-"))
   const stateDir = await mkdtemp(join(tempRoot, "omo-goal-ownership-state-"))
   const tools = new Map<string, ToolRecord>()
+  const store = openGoalStore(goalDirectory(stateDir))
   const ctx = {
     location: { project: { canonical } },
     session: {
@@ -25,7 +29,16 @@ async function fixture() {
         return {}
       },
     },
-    event: { subscribe: async function* () {} },
+    event: {
+      subscribe: ({ signal }: { signal: AbortSignal }) => ({
+        async *[Symbol.asyncIterator]() {
+          if (!signal.aborted)
+            await new Promise<void>((resolve) =>
+              signal.addEventListener("abort", () => resolve(), { once: true }),
+            )
+        },
+      }),
+    },
     tool: {
       async transform(callback: (editor: unknown) => void) {
         callback({
@@ -41,8 +54,7 @@ async function fixture() {
       },
     },
   } as unknown as Plugin.Context
-  const dispose = await mountGoal(ctx, stateDir, true)
-  const store = openGoalStore(goalDirectory(stateDir))
+  const dispose = await mountGoal(ctx, stateDir, true, undefined, store)
   store.set("ses_victim", "Private victim objective")
   // Snapshot the victim's stored objective — used to verify the record is
   // unchanged after a foreign-session attempt.
@@ -57,8 +69,9 @@ async function fixture() {
     },
     async cleanup() {
       await dispose()
-      await rm(canonical, { recursive: true, force: true })
-      await rm(stateDir, { recursive: true, force: true })
+      store.close()
+      await rmRetry(canonical)
+      await rmRetry(stateDir)
     },
   }
 }

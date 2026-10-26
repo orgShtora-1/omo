@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/npm/l/@shtora/omo)](./LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.4.2-fdd50b)](https://bun.sh)
 
-Maintained by Shtora.
+Maintained by Shtora. **v0.3.0** — Windows production-ready.
 
 `@shtora/omo` is a native [OpenCode V2](https://opencode.ai/v2) plugin that turns the host into an orchestrated agent runtime: durable plans with evidence-gated steps, bounded parallel delegation to routed specialists, session todos joined with live plan progress, handoff artifacts, memory with dream/time reflection, LSP intelligence with reviewed edits, and an optional TUI face.
 

@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { mountBoulder } from "../../src/boulder/tools"
+import { rmSyncRetry } from "../unit/test-utils"
 
 type RegisteredTool = {
   name: string
@@ -77,7 +78,7 @@ async function harness() {
       now += ms
     },
     dispose,
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => rmSyncRetry(root),
   }
 }
 

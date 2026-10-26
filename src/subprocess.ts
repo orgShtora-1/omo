@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process"
 import { OmoError } from "./errors/base.js"
-import { logError } from "./errors/logging.js"
 import type { ERROR_CODES, ErrorCode } from "./errors/registry.js"
 
 export type ProcessErrorCode = ErrorCode & (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

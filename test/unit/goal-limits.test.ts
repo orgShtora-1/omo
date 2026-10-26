@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -9,11 +9,19 @@ import {
   openGoalStore,
   type UsageSnapshot,
 } from "../../src/goal/store"
+import { rmRetry } from "./test-utils"
 
 async function tempStore() {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-limits-"))
   const store = openGoalStore(dir)
-  return { dir, store, cleanup: () => rm(dir, { recursive: true, force: true }) }
+  return {
+    dir,
+    store,
+    cleanup: async () => {
+      store.close()
+      await rmRetry(dir)
+    },
+  }
 }
 
 function dbPath(dir: string) {
@@ -204,16 +212,20 @@ test.each(["limit-value", "limit-dimension", "status"])(
 
 test("limits survive reopening the store so a restart cannot re-arm the budget", async () => {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-limits-"))
+  let first: GoalStore
+  let reopened: GoalStore
   try {
-    const first = openGoalStore(dir)
+    first = openGoalStore(dir)
     first.set(session, "ship release", { maxCost: 0.1 })
     first.accrueSnapshot(session, snapshot(0.05, 10))
     first.accrueSnapshot(session, snapshot(0.16, 20))
-    const reopened = openGoalStore(dir) as GoalStore
+    reopened = openGoalStore(dir) as GoalStore
     expect(reopened.get(session)?.limits).toEqual({ maxCost: 0.1 })
     expect(reopened.get(session)?.limitExceeded).toBe("cost")
     expect(() => reopened.resume(session)).toThrow("limit-exceeded: cost")
   } finally {
-    await rm(dir, { recursive: true, force: true })
+    first?.close()
+    reopened?.close()
+    await rmRetry(dir)
   }
 })

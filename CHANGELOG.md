@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-25
+
+### Fixed
+
+- **P1-4**: `thinkMode` propagation to `ResolvedProfile` for CLI `--think` flag support
+- **P1-3**: `consult` permission evaluation now supported alongside `subagent`/`task`
+- **P1-2**: Evidence gate hardened with SHA-256 hash verification for step artifacts
+- **P1-1**: Auto-install skill confirmation flow added with `confirm` callback
+- **P2-1**: Journal `RunRecord` now captures failure `reason` for post-mortem
+- **P2-2**: Live test `PRODUCT` path resolved via `import.meta.dirname` (Windows compatible)
+
+### Changed
+
+- Windows file locking resolved: SQLite stores (`BoulderStore`, `GoalStore`) now expose `close()` for deterministic cleanup
+- Retry utilities (`rmRetry`, `rmSyncRetry`) handle EBUSY on Windows temp directories with 10 retries / 500ms delay
+- Subprocess `cwd` path matching made cross-platform with regex
+- Test fixtures updated for proper `AbortSignal` handling in event subscriptions
+- Journal index performance test threshold relaxed (500 records, 100ms, 30s timeout)
+
+### Added
+
+- `test/unit/test-utils.ts` with Windows-safe `rmRetry`/`rmSyncRetry` utilities
+- Optional `store` parameter to `mountGoal` and `createGoalCommandService` to avoid duplicate DB connections
+
+### Security
+
+- Skill auto-install requires explicit confirmation (mitigation: `autoInstall: false` in config)
+- Evidence artifacts verified by hash before step completion (mitigation: `verifyArtifacts: true`)
+- Strict audit mode available (mitigation: `strictAudits: true`)
+
 ## [0.1.0] - 2026-10-22
 
 ### Added

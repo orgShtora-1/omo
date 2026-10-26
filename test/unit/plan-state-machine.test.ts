@@ -35,8 +35,8 @@ describe("plan state machine — valid transitions", () => {
   it("claims a pending step when dependencies are complete", () => {
     const plan = createPlan(baseInput)
     const claimed = transition(plan, claim("a"))
-    expect(claimed.steps[0]!.state).toBe("running")
-    expect(claimed.steps[0]!.attempts).toHaveLength(1)
+    expect(claimed.steps[0]?.state).toBe("running")
+    expect(claimed.steps[0]?.attempts).toHaveLength(1)
   })
 
   it("transitions running → verifying → completed", () => {
@@ -49,7 +49,7 @@ describe("plan state machine — valid transitions", () => {
       stepID: "a",
       attemptID: "att-1",
     })
-    expect(verifying.steps[0]!.state).toBe("verifying")
+    expect(verifying.steps[0]?.state).toBe("verifying")
     const completed = transition(verifying, {
       id: "complete-a",
       at: 1003,
@@ -66,7 +66,7 @@ describe("plan state machine — valid transitions", () => {
         },
       ],
     })
-    expect(completed.steps[0]!.state).toBe("completed")
+    expect(completed.steps[0]?.state).toBe("completed")
   })
 
   it("cancels all pending/running steps when parent is cancelled", () => {
@@ -229,7 +229,7 @@ describe("plan state machine — evidence & verification", () => {
       evidence: [],
       waiver: "Documentation-only waiver",
     })
-    expect(completed.steps[0]!.state).toBe("completed")
+    expect(completed.steps[0]?.state).toBe("completed")
   })
 })
 

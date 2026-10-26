@@ -1,7 +1,7 @@
 # Security Policy
 
-**Last updated:** 2026-10-22  
-**Version:** @shtora/omo@0.1.0
+**Last updated:** 2026-10-25  
+**Version:** @shtora/omo@0.3.0
 
 ---
 
@@ -9,7 +9,9 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.1.x   | ✅ Current         |
+| 0.3.x   | ✅ Current         |
+| 0.2.x   | ⚠️ Maintenance only |
+| 0.1.x   | ⚠️ Maintenance only |
 | < 0.1   | ❌ Unsupported     |
 
 ---

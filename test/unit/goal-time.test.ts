@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { openGoalStore } from "../../src/goal/store"
+import { rmRetry } from "./test-utils"
 
 const session = "ses_time"
 
@@ -18,7 +19,10 @@ async function fixture() {
     advance: (ms: number) => {
       now += ms
     },
-    cleanup: () => rm(dir, { recursive: true, force: true }),
+    cleanup: async () => {
+      store.close()
+      await rmRetry(dir)
+    },
   }
 }
 

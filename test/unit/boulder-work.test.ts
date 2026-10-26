@@ -1,16 +1,24 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { createHash } from "node:crypto"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { openBoulderStore } from "../../src/boulder/store"
+import { rmRetry } from "./test-utils"
 
 async function stateHome() {
   const stateDir = await mkdtemp(join(tmpdir(), "omo-boulder-work-"))
   await writeFile(join(stateDir, "plan.md"), "- [ ] Ship\n")
   await writeFile(join(stateDir, "other.md"), "- [x] Done\n")
-  return { stateDir, cleanup: () => rm(stateDir, { recursive: true, force: true }) }
+  const store = openBoulderStore(stateDir)
+  return {
+    stateDir,
+    store,
+    cleanup: async () => {
+      store.close()
+      await rmRetry(stateDir)
+    },
+  }
 }
 
 function dbPath(stateDir: string) {
@@ -64,33 +72,32 @@ test("a swept work keeps its stale marker through a transition so recovery stays
 })
 
 test("a handoff only exposes work to the invited session and never implicitly", async () => {
-  const { stateDir, cleanup } = await stateHome()
+  const { store, cleanup } = await stateHome()
   try {
-    const owner = openBoulderStore(stateDir)
-    const work = owner.start("owner", "plan.md")
-    expect(owner.list("invitee")).toEqual([])
-    expect(owner.invitations("invitee")).toEqual([])
-    expect(() => owner.offer("owner", work.id, " ")).toThrow("native-session-required")
-    expect(() => owner.offer("owner", "unknown-work", "invitee")).toThrow("unknown-work")
-    expect(() => owner.offer("owner", work.id, "owner")).toThrow("self-handoff")
-    owner.offer("owner", work.id, "invitee")
-    expect(owner.invitations("invitee")).toEqual([
+    const work = store.start("owner", "plan.md")
+    expect(store.list("invitee")).toEqual([])
+    expect(store.invitations("invitee")).toEqual([])
+    expect(() => store.offer("owner", work.id, " ")).toThrow("native-session-required")
+    expect(() => store.offer("owner", "unknown-work", "invitee")).toThrow("unknown-work")
+    expect(() => store.offer("owner", work.id, "owner")).toThrow("self-handoff")
+    store.offer("owner", work.id, "invitee")
+    expect(store.invitations("invitee")).toEqual([
       expect.objectContaining({ workID: work.id, fromSessionID: "owner", state: "offered" }),
     ])
-    expect(owner.invitations("bystander")).toEqual([])
-    expect(owner.list("invitee")).toEqual([])
-    expect(() => owner.claim("bystander", work.id)).toThrow("no-handoff")
-    const claimed = owner.claim("invitee", work.id)
+    expect(store.invitations("bystander")).toEqual([])
+    expect(store.list("invitee")).toEqual([])
+    expect(() => store.claim("bystander", work.id)).toThrow("no-handoff")
+    const claimed = store.claim("invitee", work.id)
     expect(claimed.sessionID).toBe("invitee")
     expect(claimed.plan).toBe("plan.md")
     expect(claimed.handedOffFrom).toBe("owner")
-    expect(owner.list("invitee").map((item) => item.id)).toEqual([work.id])
+    expect(store.list("invitee").map((item) => item.id)).toEqual([work.id])
     // Ownership moves: leaving a copy behind would create two independently
     // owned live works that both the offerer and the claimer could sweep.
-    expect(owner.list("owner").map((item) => item.id)).toEqual([])
-    expect(owner.get("owner", work.id)).toBeNull()
-    expect(owner.invitations("invitee")[0]?.state).toBe("claimed")
-    expect(() => owner.claim("invitee", work.id)).toThrow("handoff-claimed")
+    expect(store.list("owner").map((item) => item.id)).toEqual([])
+    expect(store.get("owner", work.id)).toBeNull()
+    expect(store.invitations("invitee")[0]?.state).toBe("claimed")
+    expect(() => store.claim("invitee", work.id)).toThrow("handoff-claimed")
   } finally {
     await cleanup()
   }
@@ -98,10 +105,11 @@ test("a handoff only exposes work to the invited session and never implicitly", 
 
 test("stale works are flagged without changing status and need explicit recovery", async () => {
   const { stateDir, cleanup } = await stateHome()
+  let now = Date.parse("2026-01-01T00:00:00.000Z")
+  const clock = () => now
+  const customStore = openBoulderStore(stateDir, { now: clock, staleAfterMs: 1000 })
   try {
-    let now = Date.parse("2026-01-01T00:00:00.000Z")
-    const clock = () => now
-    const store = openBoulderStore(stateDir, { now: clock, staleAfterMs: 1000 })
+    const store = customStore
     const work = store.start("owner", "plan.md")
     const terminal = store.start("owner", "other.md")
     store.transition("owner", "completed", terminal.id)
@@ -129,14 +137,15 @@ test("stale works are flagged without changing status and need explicit recovery
     expect(store.get("owner", work.id)?.status).toBe("abandoned")
     expect(() => store.recover("owner", work.id, "resume")).toThrow("terminal-work")
   } finally {
+    customStore.close()
     await cleanup()
   }
 })
 
 test("boulder refuses corrupt multi-work records and unknown handoff state", async () => {
   const { stateDir, cleanup } = await stateHome()
+  const store = openBoulderStore(stateDir)
   try {
-    const store = openBoulderStore(stateDir)
     const work = store.start("owner", "plan.md")
     store.offer("owner", work.id, "invitee")
     expect(() => store.claim("invitee", work.id)).not.toThrow()
@@ -155,6 +164,7 @@ test("boulder refuses corrupt multi-work records and unknown handoff state", asy
     expect(() => store.list("invitee")).toThrow("invalid-work-state")
     db.close()
   } finally {
+    store.close()
     await cleanup()
   }
 })

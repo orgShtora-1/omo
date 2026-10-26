@@ -38,3 +38,4 @@ runtime.lock
 .DS_Store
 /audit
 /docs
+AGENTS.md

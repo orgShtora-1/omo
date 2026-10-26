@@ -1,5 +1,4 @@
 import type { Plugin } from "@opencode/plugin"
-import type { ResolvedOptions } from "../config/resolve"
 import type { ProfileConfig } from "../config/schema"
 
 // Extended Thinking Mode — P2-T3. When a profile has `thinkMode: true`, this

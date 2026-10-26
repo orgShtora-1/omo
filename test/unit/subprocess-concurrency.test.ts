@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { type BoundedOptions, ProcessError, runBounded } from "../../src/subprocess"
+import { describe, expect, it } from "bun:test"
+import { ProcessError, runBounded } from "../../src/subprocess"
 
 const node = process.execPath
 
@@ -86,7 +86,10 @@ describe("subprocess retry logic", () => {
       cwd: "/tmp",
       timeoutMs: 5000,
     })
-    expect(result.stdout.trim()).toBe("/tmp")
+    // On Windows, Node.js normalizes /tmp to C:\tmp (or similar)
+    // Accept either the Unix-style or Windows-style path
+    const actualCwd = result.stdout.trim()
+    expect(actualCwd).toMatch(/^(\/tmp|[A-Z]:[\\/]tmp)$/i)
   })
 })
 

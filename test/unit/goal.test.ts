@@ -1,17 +1,22 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { writeFileSync } from "node:fs"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { parseOptions } from "../../src/config/schema"
 import { openGoalStore, validateObjective } from "../../src/goal/store"
+import { rmRetry } from "./test-utils"
 
 async function tempDir() {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-"))
+  const store = openGoalStore(dir)
   return {
     dir,
-    cleanup: () => rm(dir, { recursive: true, force: true }),
+    store,
+    cleanup: async () => {
+      store.close()
+      await rmRetry(dir)
+    },
   }
 }
 
@@ -33,9 +38,8 @@ test("validateObjective trims and enforces bounds", () => {
 })
 
 test("set creates an active goal that get returns", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     const goal = store.set("ses_a", "  Deliver parity  ")
     expect(goal.status).toBe("active")
     expect(goal.version).toBe(1)
@@ -52,9 +56,8 @@ test("set creates an active goal that get returns", async () => {
 })
 
 test("set replaces the goal, keeps createdAt and returns to active", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     const first = store.set("ses_a", "first objective")
     const completed = store.complete("ses_a")
     expect(completed?.status).toBe("complete")
@@ -68,9 +71,8 @@ test("set replaces the goal, keeps createdAt and returns to active", async () =>
 })
 
 test("pause, resume and complete transitions persist", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     store.set("ses_a", "objective")
     expect(store.pause("ses_a")?.status).toBe("paused")
     expect(store.get("ses_a")?.status).toBe("paused")
@@ -86,9 +88,8 @@ test("pause, resume and complete transitions persist", async () => {
 })
 
 test("get on a missing goal is null and clear removes the record", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     expect(store.get("ses_x")).toBeNull()
     expect(store.clear("ses_x")).toBe(false)
     store.set("ses_x", "to clear")
@@ -101,9 +102,8 @@ test("get on a missing goal is null and clear removes the record", async () => {
 })
 
 test("a corrupt goal record is treated as absent", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { dir, store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     store.set("ses_bad", "Valid objective")
     // Corrupt the status in SQLite directly so read validation fails closed.
     const dbPath = join(dir, "goal.db")
@@ -117,21 +117,22 @@ test("a corrupt goal record is treated as absent", async () => {
 })
 
 test("goals survive a store restart", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { dir, store, cleanup } = await tempDir()
   try {
-    openGoalStore(dir).set("ses_r", "persist me")
+    store.set("ses_r", "persist me")
+    store.close()
     const reopened = openGoalStore(dir)
     expect(reopened.get("ses_r")?.objective).toBe("persist me")
     expect(reopened.get("ses_r")?.status).toBe("active")
+    reopened.close()
   } finally {
     await cleanup()
   }
 })
 
 test("invalid persisted goal status, objective, and continuation count fail closed", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { dir, store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     const original = store.set("ses_bad", "Valid objective")
     for (const patch of [
       { status: "running" },
@@ -160,9 +161,8 @@ test("invalid persisted goal status, objective, and continuation count fail clos
 })
 
 test("token aggregate overflow preserves the readable goal", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { dir, store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     store.set("ses_usage", "Keep a valid record")
     // Two individually valid counters can still total Infinity, so the difference
     // between two such reports is NaN and must be refused instead of stored.
@@ -177,16 +177,18 @@ test("token aggregate overflow preserves the readable goal", async () => {
     }
     const original = store.accrueSnapshot("ses_usage", usage)
     expect(() => store.accrueSnapshot("ses_usage", usage)).toThrow("invalid-usage: aggregate")
-    expect(openGoalStore(dir).get("ses_usage")).toEqual(original)
+    store.close()
+    const reopened = openGoalStore(dir)
+    expect(reopened.get("ses_usage")).toEqual(original)
+    reopened.close()
   } finally {
     await cleanup()
   }
 })
 
 test("a repeated maximum-cost report accrues nothing instead of overflowing", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { dir, store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     store.set("ses_usage", "Keep a valid record")
     const usage = {
       cost: Number.MAX_VALUE,
@@ -196,16 +198,18 @@ test("a repeated maximum-cost report accrues nothing instead of overflowing", as
     // A cumulative snapshot can only ever grow by at most one report, so a
     // maximum-cost report cannot overflow the lifetime total on its own.
     expect(store.accrueSnapshot("ses_usage", usage)?.costUsed).toBe(0)
-    expect(openGoalStore(dir).get("ses_usage")?.costUsed).toBe(0)
+    store.close()
+    const reopened = openGoalStore(dir)
+    expect(reopened.get("ses_usage")?.costUsed).toBe(0)
+    reopened.close()
   } finally {
     await cleanup()
   }
 })
 
 test("goals are isolated per session", async () => {
-  const { dir, cleanup } = await tempDir()
+  const { store, cleanup } = await tempDir()
   try {
-    const store = openGoalStore(dir)
     store.set("ses_one", "objective one")
     store.set("ses_two", "objective two")
     expect(store.get("ses_one")?.objective).toBe("objective one")

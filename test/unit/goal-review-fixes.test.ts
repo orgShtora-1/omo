@@ -1,15 +1,22 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createGoalContinuation } from "../../src/goal/continuation"
 import { type GoalStore, openGoalStore } from "../../src/goal/store"
+import { rmRetry } from "./test-utils"
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-review-"))
   const store = openGoalStore(join(dir, "goals"))
-  return { store, cleanup: () => rm(dir, { recursive: true, force: true }) }
+  return {
+    store,
+    cleanup: async () => {
+      store.close()
+      await rmRetry(dir)
+    },
+  }
 }
 
 function dbPath(dir: string) {
@@ -117,7 +124,8 @@ test("a legacy record cancelled with an unresolved admission cannot be reopened 
     expect(abandoned?.status).toBe("cancelled")
     expect(store.finishContinuation("legacy", "admission-1", true)?.status).toBe("cancelled")
   } finally {
-    await rm(dir, { recursive: true, force: true })
+    store.close()
+    await rmRetry(dir)
   }
 })
 

@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { openBoulderContext } from "../../src/boulder/context"
 import { mountGoal } from "../../src/goal/tools"
+import { rmRetry } from "../unit/test-utils"
 
 type ToolRecord = {
   name: string
@@ -24,7 +25,7 @@ function fixture(root: string) {
   const tools: ToolRecord[] = []
   const prompts: Array<{ sessionID: string; text: string }> = []
   const queue: Queued[] = []
-  let wake: (() => void) | undefined
+  const wakers: Array<() => void> = []
   const ctx = {
     location: { directory: root, project: { id: "proj_wiring", canonical: root } },
     session: {
@@ -54,10 +55,10 @@ function fixture(root: string) {
                 resolve()
               }
               signal.addEventListener("abort", onAbort, { once: true })
-              wake = () => {
+              wakers.push(() => {
                 signal.removeEventListener("abort", onAbort)
                 resolve()
-              }
+              })
             })
           }
         },
@@ -84,7 +85,8 @@ function fixture(root: string) {
     prompts,
     push(event: Queued) {
       queue.push(event)
-      wake?.()
+      for (const w of wakers) w()
+      wakers.length = 0
     },
   }
 }
@@ -99,9 +101,10 @@ async function waitFor(what: string, ready: () => boolean): Promise<void> {
 
 test("a continuation prompt carries the live boulder work context", async () => {
   const root = await mkdtemp(join(tmpdir(), "omo-boulder-continuation-"))
+  let context: ReturnType<typeof openBoulderContext>
   try {
     await writeFile(join(root, "plan.md"), "- [x] Investigate\n- [ ] Ship the gate\n")
-    const context = openBoulderContext(root)
+    context = openBoulderContext(root)
     const work = context.store.start("ses_wiring", "plan.md")
     const host = fixture(root)
     const dispose = await mountGoal(host.ctx, root, true, { work: context.summary })
@@ -121,15 +124,17 @@ test("a continuation prompt carries the live boulder work context", async () => 
       await dispose()
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    context?.store.close()
+    await rmRetry(root)
   }
 })
 
 test("a session without live work keeps the plain continuation prompt", async () => {
   const root = await mkdtemp(join(tmpdir(), "omo-boulder-continuation-"))
+  let context: ReturnType<typeof openBoulderContext>
   try {
     await writeFile(join(root, "plan.md"), "- [ ] Ship\n")
-    const context = openBoulderContext(root)
+    context = openBoulderContext(root)
     context.store.start("ses_other", "plan.md")
     context.store.transition("ses_other", "completed")
     const host = fixture(root)
@@ -149,6 +154,7 @@ test("a session without live work keeps the plain continuation prompt", async ()
       await dispose()
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    context?.store.close()
+    await rmRetry(root)
   }
 })

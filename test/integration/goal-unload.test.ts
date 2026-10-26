@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { openGoalStore } from "../../src/goal/store"
 import { mountGoalContinuation } from "../../src/goal/tools"
+import { rmRetry } from "../unit/test-utils"
+
+test.timeout = 30000
 
 test("unload aborts the active goal prompt request and pauses its reservation", async () => {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-unload-"))
@@ -55,6 +58,7 @@ test("unload aborts the active goal prompt request and pauses its reservation", 
   } finally {
     release()
     await (stopping ?? dispose())
-    await rm(dir, { recursive: true, force: true })
+    store.close()
+    await rmRetry(dir)
   }
 })

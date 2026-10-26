@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it } from "bun:test"
 import { OmoError } from "../../src/errors/base.js"
 import {
   disableStructuredLogging,
@@ -27,7 +27,7 @@ describe("structured error logging", () => {
     expect(typeof entry.timestamp).toBe("string")
     // Also captured in sink
     expect(entries).toHaveLength(1)
-    expect(entries[0]!.code).toBe("timeout")
+    expect(entries[0]?.code).toBe("timeout")
   })
 
   it("includes path and details when present", () => {
@@ -37,8 +37,8 @@ describe("structured error logging", () => {
       details: { deps: ["a", "b"] },
     })
     logError(error)
-    expect(entries[0]!.path).toBe("step-3")
-    expect(entries[0]!.details).toEqual({ deps: ["a", "b"] })
+    expect(entries[0]?.path).toBe("step-3")
+    expect(entries[0]?.details).toEqual({ deps: ["a", "b"] })
   })
 
   it("captures cause chain up to 5 links", () => {
@@ -49,16 +49,16 @@ describe("structured error logging", () => {
     const top = new OmoError("spawn", "top")
     Object.defineProperty(top, "cause", { value: middle, writable: false, configurable: true })
     logError(top)
-    expect(entries[0]!.cause).toContain("top")
-    expect(entries[0]!.cause).toContain("middle")
-    expect(entries[0]!.cause).toContain("root")
+    expect(entries[0]?.cause).toContain("top")
+    expect(entries[0]?.cause).toContain("middle")
+    expect(entries[0]?.cause).toContain("root")
   })
 
   it("logs plain Error objects with fallback code", () => {
     flush()
     logError(new TypeError("bad type"))
-    expect(entries[0]!.code).toBe("typeerror")
-    expect(entries[0]!.message).toBe("bad type")
+    expect(entries[0]?.code).toBe("typeerror")
+    expect(entries[0]?.message).toBe("bad type")
   })
 
   it("does not crash on null/undefined", () => {

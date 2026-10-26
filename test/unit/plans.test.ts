@@ -103,7 +103,7 @@ describe("artifact verification", () => {
           command: "bun run check",
           exitCode: 0,
           revision: "abc123",
-          artifactHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          artifactHash: "284d1e8c4918248233df17642bbb940c001e1fa856c18aab86ba6dbe7813eb13",
           origin: "auto" as const,
         },
       ]

@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test"
 import { realpathSync } from "node:fs"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { type BoulderOptions, type BoulderStore, openBoulderStore } from "../../src/boulder/store"
 import { mountBoulder } from "../../src/boulder/tools"
 import { type MonitorView, mountMonitor } from "../../src/terminal/monitor-tools"
+import { rmRetry } from "./test-utils"
 
 // The host's `execute` wrapper requires every tool result to carry the declared
 // `output` field. Boulder and monitor tools used to return `{ content }` only,
@@ -104,7 +105,8 @@ async function mountBoulderHarness(options?: BoulderOptions): Promise<BoulderHar
 
 async function cleanup(h: BoulderHarness): Promise<void> {
   await h.dispose()
-  await rm(h.root, { recursive: true, force: true })
+  h.store.close()
+  await rmRetry(h.root)
 }
 
 test("boulder_state returns its declared output alongside content", async () => {
@@ -193,6 +195,6 @@ test("monitor tools return the output contract", async () => {
       await dispose()
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rmRetry(root, { recursive: true, force: true })
   }
 })

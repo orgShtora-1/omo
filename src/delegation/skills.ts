@@ -1,4 +1,4 @@
-import { type ErrorCode, OmoError } from "../errors/base.js"
+import { OmoError } from "../errors/base.js"
 
 export type SkillCatalogEntry = { id: string; name: string; description?: string }
 

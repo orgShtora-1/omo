@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { openGoalStore } from "../../src/goal/store"
 import { mountGoalContinuation } from "../../src/goal/tools"
+import { rmRetry } from "../unit/test-utils"
+
+test.timeout = 30000
 
 test.each(["project", "location", "missing", "owned"])(
   "goal events enforce %s session scope before usage or admission",
@@ -82,7 +85,8 @@ test.each(["project", "location", "missing", "owned"])(
       expect(store.get("s")?.continuations).toBe(failure === "owned" ? 1 : 0)
     } finally {
       await dispose()
-      await rm(dir, { recursive: true, force: true })
+      store.close()
+      await rmRetry(dir)
     }
   },
 )

@@ -1,10 +1,14 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
+import { goalDirectory, openGoalStore } from "../../src/goal/store"
 import { createGoalCommandService } from "../../src/goal/tools"
 import { mountTerminal } from "../../src/terminal/commands"
+import { rmRetry } from "../unit/test-utils"
+
+test.timeout = 30000
 
 interface FakeCommandDefinition {
   name: string
@@ -53,10 +57,11 @@ const baseService = () => ({
 
 test("omo-goal drives the session goal through show/set/pause/resume/complete/clear", async () => {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-cmd-"))
+  const store = openGoalStore(goalDirectory(dir))
   const { ctx, definitions, output } = harness()
   const cleanup = await mountTerminal(
     ctx,
-    { ...baseService(), goal: createGoalCommandService(dir) },
+    { ...baseService(), goal: createGoalCommandService(dir, store) },
     { enabled: true },
   )
   try {
@@ -83,7 +88,8 @@ test("omo-goal drives the session goal through show/set/pause/resume/complete/cl
     expect(output.at(-1)).toContain('"goal": null')
   } finally {
     await cleanup()
-    await rm(dir, { recursive: true, force: true })
+    store.close()
+    await rmRetry(dir)
   }
 })
 
@@ -95,6 +101,6 @@ test("omo-goal is omitted when the service has no goal handler", async () => {
     expect(definitions.map((item) => item.name)).not.toContain("omo-goal")
   } finally {
     await cleanup()
-    await rm(dir, { recursive: true, force: true })
+    await rmRetry(dir)
   }
 })

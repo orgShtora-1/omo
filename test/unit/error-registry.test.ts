@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test"
+import { describe, expect, it } from "bun:test"
 import { OmoError } from "../../src/errors/base.js"
 import {
   ERROR_CODES,

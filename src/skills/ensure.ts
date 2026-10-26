@@ -25,6 +25,8 @@ export type EnsureSkillCoverageInput = {
   strictAudits: boolean
   /** Package manager for the default install path; forwarded from `runtime.packageManager`. */
   packageManager?: PackageManager
+  /** Optional confirmation prompter. When provided, the user is asked before any auto-install. */
+  confirm?: (text: string) => Promise<boolean>
   search?: (query: string, limit: number) => Promise<SkillSearchHit[]>
   getAudits?: (skillId: string) => Promise<{ verdict: AuditVerdict; audits: unknown[] }>
   install?: (input: { source: string; slug: string }) => Promise<"installed" | "install-failed">
@@ -126,6 +128,19 @@ export async function ensureSkillCoverage(
       (verdict === "fail" || (input.strictAudits && verdict !== "pass"))
     )
       return { installedSkills: [{ id: top.slug, source: top.source, outcome: "refused-audit" }] }
+
+    // Auto-install confirmation: ask user before proceeding with skill installation
+    if (input.confirm) {
+      const confirmed = await input.confirm(
+        `Install skill "${top.slug}" from ${top.source}?\n` +
+          `Audit verdict: ${verdict}\n` +
+          `This will run: pnpm dlx @skills/install ${top.source}/${top.slug}`,
+      )
+      if (!confirmed) {
+        return { installedSkills: [{ id: top.slug, source: top.source, outcome: "refused-audit" }] }
+      }
+    }
+
     const install =
       input.install ??
       ((hit) => installSkill({ ...hit, cwd: process.cwd(), packageManager: input.packageManager }))

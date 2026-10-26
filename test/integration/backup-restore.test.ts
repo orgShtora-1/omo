@@ -12,7 +12,7 @@ import { backupState, restoreState } from "../../src/state/backup"
 import { openPlanRepository } from "../../src/state/repository"
 
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex")
-const rm = async (root: string) => {
+const rmWithRetry = async (root: string) => {
   // Windows releases SQLite file locks asynchronously after close; yield and
   // retry instead of failing the suite on a transient EBUSY.
   let last: unknown
@@ -28,7 +28,7 @@ const rm = async (root: string) => {
   throw last
 }
 const clean = async (...roots: string[]) => {
-  for (const root of roots) await rm(root)
+  for (const root of roots) await rmWithRetry(root)
 }
 
 async function seed(stateDir: string) {
@@ -92,12 +92,7 @@ describe("backup and restore", () => {
     try {
       await seed(stateDir)
       backupState(stateDir, backup)
-      rmSync(stateDir, {
-        recursive: true,
-        force: true,
-        maxRetries: 10,
-        retryDelay: 300,
-      })
+      await rmWithRetry(stateDir)
       restoreState(backup, stateDir)
       const scope = { projectID: "project", locationID: "loc", parentSessionID: "parent" }
       const plans = openPlanRepository(join(stateDir, "plans.sqlite"))

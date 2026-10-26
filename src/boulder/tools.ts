@@ -187,5 +187,6 @@ export async function mountBoulder(
     controller.abort()
     await liveness.catch(() => {})
     registration.dispose()
+    store.close()
   }
 }

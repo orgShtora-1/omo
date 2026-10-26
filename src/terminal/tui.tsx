@@ -57,6 +57,7 @@ export function mountTerminalUi(ctx: Plugin.Context): () => void {
     else if (selected === "action:cancel") await planAction("omo-cancel")
     else ctx.ui.router.navigate({ type: "session", sessionID: selected })
   }
+
   // keymap layers are automatically owned/removed by the SDK's plugin lifecycle.
   ctx.keymap.layer(() => ({
     mode: "global",

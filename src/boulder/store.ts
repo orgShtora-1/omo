@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import { type PlanProgress, planProgress } from "./progress"
@@ -64,6 +64,8 @@ export interface BoulderStore {
    */
   touch(sessionID: string, workID?: string): BoulderWork | null
   recover(sessionID: string, workID: string, disposition: "resume" | "abandon"): BoulderWork | null
+  /** Close the underlying database connection. */
+  close(): void
 }
 
 const statuses: readonly WorkStatus[] = ["active", "paused", "completed", "abandoned"]
@@ -144,10 +146,10 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
   const getSessionInvitations = db.query<InvitationRow, [string]>(
     "SELECT work_id, from_session_id, at, state FROM omo_boulder_invitations WHERE session_id = ?",
   )
-  const getWork = db.query<WorkRow, [string, string]>(
+  const _getWork = db.query<WorkRow, [string, string]>(
     "SELECT id, session_id, plan, status, created_at, updated_at, stale, handed_off_from FROM omo_boulder_works WHERE session_id = ? AND id = ?",
   )
-  const getInvitation = db.query<InvitationRow, [string, string]>(
+  const _getInvitation = db.query<InvitationRow, [string, string]>(
     "SELECT work_id, from_session_id, at, state FROM omo_boulder_invitations WHERE session_id = ? AND from_session_id = ?",
   )
   const upsertInvitation = db.query(
@@ -468,6 +470,9 @@ export function openBoulderStore(stateHome: string, options?: BoulderOptions): B
         changed.sessionID,
       )
       return changed
+    },
+    close() {
+      db.close(true)
     },
   }
 }

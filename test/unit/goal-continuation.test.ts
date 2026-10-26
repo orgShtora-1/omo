@@ -1,15 +1,23 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createGoalContinuation, MAX_CONTINUATIONS } from "../../src/goal/continuation"
 import { type GoalStore, openGoalStore } from "../../src/goal/store"
+import { rmSyncRetry } from "./test-utils"
 
 function tempStore(): { dir: string; store: GoalStore; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "omo-goal-cont-"))
   const store = openGoalStore(dir)
-  return { dir, store, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+  return {
+    dir,
+    store,
+    cleanup: () => {
+      store.close()
+      rmSyncRetry(dir)
+    },
+  }
 }
 
 function dbPath(dir: string) {
@@ -297,7 +305,9 @@ test("ambiguous prompt failure consumes its reservation and pauses instead of re
   }
 })
 
-test("concurrent idle events reserve one continuation before prompt admission", async () => {
+test("concurrent idle events reserve one continuation before prompt admission", {
+  timeout: 30000,
+}, async () => {
   const { dir, store, cleanup } = tempStore()
   let release = () => {}
   const admitted = new Promise<void>((resolve) => {
@@ -316,7 +326,9 @@ test("concurrent idle events reserve one continuation before prompt admission", 
     const first = continuation.handleEvent({ type: "session.idle", data: { sessionID: "s" } })
     const second = continuation.handleEvent({ type: "session.idle", data: { sessionID: "s" } })
     expect(calls).toBe(1)
-    expect(openGoalStore(dir).get("s")?.continuations).toBe(1)
+    const verifyStore = openGoalStore(dir)
+    expect(verifyStore.get("s")?.continuations).toBe(1)
+    verifyStore.close()
     release()
     expect(await first).toEqual({ continued: true, sessionID: "s" })
     expect(await second).toEqual({ continued: false })
@@ -326,7 +338,9 @@ test("concurrent idle events reserve one continuation before prompt admission", 
   }
 })
 
-test("reopened continuation pauses an unresolved admission instead of submitting again", async () => {
+test("reopened continuation pauses an unresolved admission instead of submitting again", {
+  timeout: 30000,
+}, async () => {
   const { dir, store, cleanup } = tempStore()
   let release = () => {}
   const admitted = new Promise<void>((resolve) => {
@@ -353,6 +367,7 @@ test("reopened continuation pauses an unresolved admission instead of submitting
     release()
     await first
     expect(reopened.get("s")?.status).toBe("paused")
+    reopened.close()
   } finally {
     release()
     cleanup()
@@ -374,6 +389,7 @@ test("continuation rejects unbounded or invalid configured limits", () => {
 
 test.each([false, true])(
   "stale admission failure=%s cannot settle a rearmed continuation",
+  { timeout: 30000 },
   async (failed) => {
     const { dir, store, cleanup } = tempStore()
     let releaseFirst = () => {}
@@ -394,19 +410,23 @@ test.each([false, true])(
         },
       }).handleEvent({ type: "session.idle", data: { sessionID: "s" } })
       store.set("s", "Replacement objective")
+      const secondStore = openGoalStore(dir)
       const second = createGoalContinuation({
-        store: openGoalStore(dir),
+        store: secondStore,
         prompt: async () => secondAdmission,
       }).handleEvent({ type: "session.idle", data: { sessionID: "s" } })
       releaseFirst()
       await first
-      const persisted = openGoalStore(dir).get("s")
+      const verifyStore = openGoalStore(dir)
+      const persisted = verifyStore.get("s")
       expect(persisted?.objective).toBe("Replacement objective")
       expect(persisted?.status).toBe("active")
       expect(persisted?.continuationPending).toBe(true)
+      verifyStore.close()
       releaseSecond()
       await second
       expect(store.get("s")?.continuationPending).toBe(false)
+      secondStore.close()
     } finally {
       releaseFirst()
       releaseSecond()

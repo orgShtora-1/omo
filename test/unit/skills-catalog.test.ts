@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -7,6 +7,7 @@ import {
   parseSkillFrontmatter,
   readAgentsCatalog,
 } from "../../src/skills/catalog.js"
+import { rmSyncRetry } from "./test-utils"
 
 describe("parseSkillFrontmatter", () => {
   test("extracts plain single-line values", () => {
@@ -111,7 +112,7 @@ describe("readAgentsCatalog (async)", () => {
       expect(catalog[0]?.path).toBe(join(skillDir, "SKILL.md"))
       expect(await readAgentsCatalog(join(dir, "missing"))).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSyncRetry(dir)
     }
   })
 

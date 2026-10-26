@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import { type ErrorCode, OmoError } from "../errors/base.js"
+import { OmoError } from "../errors/base.js"
 
 export interface LspServerConfig {
   command: string

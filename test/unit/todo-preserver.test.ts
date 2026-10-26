@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import type { Plugin } from "@opencode/plugin"
 import { formatTodos, mountTodoPreserver } from "../../src/context/todo-preserver"
 import type { TodoSnapshot } from "../../src/todo/store"
 import type { TodoReader } from "../../src/todo/sync"
@@ -66,7 +67,8 @@ describe("mountTodoPreserver", () => {
       if (!hooks[name]) hooks[name] = []
       hooks[name].push(callback)
     }
-    return {
+    const ctx = {
+      hookCalls,
       session: {
         hook: async (name: string, callback: (input: unknown) => Promise<void>) => {
           if (!hooks[name]) hooks[name] = []
@@ -82,17 +84,18 @@ describe("mountTodoPreserver", () => {
           }
         },
       },
-    } as unknown as import("@opencode/plugin").Plugin.Context
+    } as unknown as Plugin.Context & { hookCalls: typeof hookCalls }
+    return ctx
   }
 
-  function makeReader(snapshot: TodoSnapshot): TodoReader {
+  function _makeReader(snapshot: TodoSnapshot): TodoReader {
     return {
       read: async () => snapshot,
     }
   }
 
-  function fireCompaction(ctx: ReturnType<typeof makeMockCtx>, sessionID: string) {
-    const hooks = (
+  function _fireCompaction(ctx: ReturnType<typeof makeMockCtx>, _sessionID: string) {
+    const _hooks = (
       ctx as unknown as {
         session: { hook: (name: string) => Promise<{ dispose: () => Promise<void> }> }
       }
@@ -124,10 +127,10 @@ describe("mountTodoPreserver", () => {
       },
     }
 
-    let capturedInput: Record<string, unknown> | undefined
+    let _capturedInput: Record<string, unknown> | undefined
     const hookCallbacks: Array<(input: unknown) => Promise<void>> = []
     const mockSession = {
-      hook: async (name: string, callback: (input: unknown) => Promise<void>) => {
+      hook: async (_name: string, callback: (input: unknown) => Promise<void>) => {
         hookCallbacks.push(callback)
         return {
           dispose: async () => {
@@ -153,7 +156,7 @@ describe("mountTodoPreserver", () => {
 
   test("does not register hook when todoReader is undefined", async () => {
     const ctx = makeMockCtx()
-    const dispose = await mountTodoPreserver(ctx as any, undefined)
+    const dispose = await mountTodoPreserver(ctx, undefined)
 
     // Should not throw
     await dispose()
@@ -178,7 +181,7 @@ describe("mountTodoPreserver", () => {
       ],
     })
 
-    await mountTodoPreserver(ctx as any, reader)
+    await mountTodoPreserver(ctx, reader)
   })
 
   test("formats multiple todos correctly", async () => {

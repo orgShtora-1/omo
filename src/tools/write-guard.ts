@@ -123,7 +123,7 @@ function consumeReadPermission(
   canonicalPath: string,
 ): boolean {
   const readSet = state.readPermissionsBySession.get(sessionID)
-  if (!readSet || !readSet.has(canonicalPath)) return false
+  if (!readSet?.has(canonicalPath)) return false
   readSet.delete(canonicalPath)
   touchSession(state.sessionLastAccess, sessionID)
   return true

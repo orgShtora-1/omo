@@ -90,14 +90,14 @@ describe("parent task authorization diagnostics", () => {
   test("only explicit effective allow authorizes; session rules keep last-match precedence", async () => {
     expect(evaluateTaskRules([], "worker")).toBe("ask")
     expect(
-      evaluateTaskRules([{ action: "task", resource: "work*", effect: "allow" }], "worker"),
+      evaluateTaskRules([{ action: "subagent", resource: "work*", effect: "allow" }], "worker"),
     ).toBe("allow")
     expect(evaluateTaskRules([{ action: "shell", resource: "*", effect: "allow" }], "worker")).toBe(
       "ask",
     )
     await expect(
       authorizeParent(
-        host([{ action: "task", resource: "*", effect: "allow" }]),
+        host([{ action: "subagent", resource: "*", effect: "allow" }]),
         request,
         resolved,
       ),
@@ -105,8 +105,8 @@ describe("parent task authorization diagnostics", () => {
     for (const effect of ["ask", "deny"] as const) {
       await expect(
         authorizeParent(
-          host([{ action: "task", resource: "*", effect: "allow" }], {}, [
-            { action: "task", resource: "worker", effect },
+          host([{ action: "subagent", resource: "*", effect: "allow" }], {}, [
+            { action: "subagent", resource: "worker", effect },
           ]),
           request,
           resolved,
@@ -122,7 +122,7 @@ describe("parent task authorization diagnostics", () => {
     for (const effect of ["ask", "deny"] as const) {
       try {
         await authorizeParent(
-          host([{ action: "task", resource: "worker", effect }]),
+          host([{ action: "subagent", resource: "worker", effect }]),
           request,
           resolved,
         )

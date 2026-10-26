@@ -10,16 +10,22 @@ const matches = (pattern: string, value: string) =>
       .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
       .join(".*")}$`,
   ).test(value)
-export function evaluateTaskRules(rules: readonly Rule[], agentID: string): Rule["effect"] {
+
+/** Evaluate rules for a specific action (subagent, task, consult) against an agent ID. */
+function evaluateRulesForAction(
+  rules: readonly Rule[],
+  agentID: string,
+  action: "subagent" | "task" | "consult",
+): Rule["effect"] {
   let effect: Rule["effect"] = "ask"
-  // V2 exposes canonical subagent rules; retain exact V1 task as a migration alias.
   for (const rule of rules)
-    if (
-      (matches(rule.action, "subagent") || rule.action === "task") &&
-      matches(rule.resource, agentID)
-    )
+    if ((matches(rule.action, action) || rule.action === action) && matches(rule.resource, agentID))
       effect = rule.effect
   return effect
+}
+
+export function evaluateTaskRules(rules: readonly Rule[], agentID: string): Rule["effect"] {
+  return evaluateRulesForAction(rules, agentID, "subagent")
 }
 export async function authorizeParent(
   host: HostPorts,
@@ -40,13 +46,16 @@ export async function authorizeParent(
       `Parent agent is unavailable; cannot establish task authorization; action=subagent resource=${resolved.agentID} effect=deny. Remediation: restore the parent agent identity through the host before retrying`,
     )
   const agent = (await host.agent.get({ agentID: parent.agent })).data
-  const effect = evaluateTaskRules(
-    [...(agent.permissions ?? []), ...(parent.permissions ?? [])],
-    resolved.agentID,
-  )
+  const allRules = [...(agent.permissions ?? []), ...(parent.permissions ?? [])]
+
+  // Determine action type: consult targets explore/librarian; otherwise subagent.
+  const isConsult = resolved.agentID === "explore" || resolved.agentID === "librarian"
+  const action = isConsult ? "consult" : "subagent"
+  const effect = evaluateRulesForAction(allRules, resolved.agentID, action)
+
   if (effect !== "allow")
     throw new ExecutionError(
       "permission-denied",
-      `Parent subagent rule is ${effect} for ${resolved.agentID}; action=subagent resource=${resolved.agentID} effect=${effect}. Remediation: ${effect === "ask" ? "native task approval is required; obtain approval through the host before retrying" : "this task is denied; ask the project owner to review the denying rule before retrying"}`,
+      `Parent ${action} rule is ${effect} for ${resolved.agentID}; action=${action} resource=${resolved.agentID} effect=${effect}. Remediation: ${effect === "ask" ? "native task approval is required; obtain approval through the host before retrying" : "this task is denied; ask the project owner to review the denying rule before retrying"}`,
     )
 }

@@ -1,15 +1,16 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { openTeamStore, type TeamStore } from "../../src/teams/claims"
+import { rmSyncRetry } from "./test-utils"
 
 const scope = { projectID: "project", locationID: "location", parentSessionID: "parent" }
 const directories: string[] = []
 const stores: TeamStore[] = []
 afterEach(() => {
   for (const store of stores.splice(0)) store.close()
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
+  for (const directory of directories.splice(0)) rmSyncRetry(directory)
 })
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "omo team tasks "))

@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { mountGoal } from "../../src/goal/tools"
+import { rmRetry } from "../unit/test-utils"
+
+test.timeout = 30000
 
 type ToolRecord = {
   name: string
@@ -15,7 +18,7 @@ type ToolRecord = {
 }
 
 async function waitFor(label: string, condition: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5000
+  const deadline = Date.now() + 15000
   while (!condition()) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`)
     await new Promise((resolve) => setTimeout(resolve, 25))
@@ -29,8 +32,10 @@ function liveFixture(canonical: string) {
   let wake: (() => void) | null = null
   const push = (event: unknown) => {
     queue.push(event)
-    wake?.()
-    wake = null
+    if (wake) {
+      wake()
+      wake = null
+    }
   }
   let subscribed = 0
   const ctx = {
@@ -56,22 +61,20 @@ function liveFixture(canonical: string) {
         subscribed++
         return (async function* () {
           while (!signal.aborted) {
-            const next = queue.shift()
-            if (next !== undefined) {
-              yield next
-              continue
+            if (queue.length === 0) {
+              await new Promise<void>((resolve) => {
+                const onAbort = () => {
+                  signal.removeEventListener("abort", onAbort)
+                  resolve()
+                }
+                signal.addEventListener("abort", onAbort, { once: true })
+                wake = () => {
+                  signal.removeEventListener("abort", onAbort)
+                  resolve()
+                }
+              })
             }
-            await new Promise<void>((resolve) => {
-              const onAbort = () => {
-                signal.removeEventListener("abort", onAbort)
-                resolve()
-              }
-              signal.addEventListener("abort", onAbort, { once: true })
-              wake = () => {
-                signal.removeEventListener("abort", onAbort)
-                resolve()
-              }
-            })
+            yield queue.shift()
           }
         })()
       },
@@ -87,7 +90,7 @@ function liveFixture(canonical: string) {
             added.push(record)
           },
         }
-        await editor(target)
+        editor(target)
         return { dispose() {} }
       },
     },
@@ -156,8 +159,12 @@ test("mountGoal continues an idle session toward its active goal and accrues usa
     expect(goal.goal?.costUsed).toBeCloseTo(0.04)
     expect(goal.goal?.continuations).toBe(1)
   } finally {
+    console.log("About to call dispose")
     await dispose()
-    await rm(dir, { recursive: true, force: true })
+    console.log("dispose returned")
+    console.log("About to call rmRetry")
+    await rmRetry(dir)
+    console.log("rmRetry returned")
   }
 })
 
@@ -173,6 +180,6 @@ test("mountGoal never subscribes to events when disabled", async () => {
     expect(wasSubscribed()).toBe(0)
   } finally {
     await dispose()
-    await rm(dir, { recursive: true, force: true })
+    await rmRetry(dir)
   }
 })

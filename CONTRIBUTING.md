@@ -163,6 +163,15 @@ bun run check
 | Evals | `test/evals/` | Optional, for behavior validation |
 | Live | `test/live/` | Optional, requires authenticated host |
 
+### Windows Testing
+
+OmO is Windows production-ready as of v0.3.0. When adding tests that interact with the filesystem or SQLite:
+
+- Use `rmRetry` / `rmSyncRetry` from `test/unit/test-utils.ts` for directory cleanup (handles EBUSY)
+- Call `store.close()` on `BoulderStore` and `GoalStore` before temp directory cleanup
+- Use regex path matching for cross-platform `cwd` assertions
+- Default test timeout is 5000ms; integration tests may use 30000ms
+
 ---
 
 ## Code Style

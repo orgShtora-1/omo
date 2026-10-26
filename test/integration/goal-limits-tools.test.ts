@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { goalDirectory, openGoalStore, type UsageSnapshot } from "../../src/goal/store"
 import { createGoalCommandService, mountGoal } from "../../src/goal/tools"
+import { rmRetry } from "../unit/test-utils"
+
+test.timeout = 30000
 
 type ToolRecord = {
   name: string
@@ -16,6 +19,7 @@ async function fixture() {
   const canonical = await mkdtemp(join(tmpdir(), "omo-goal-limits-tools-"))
   const stateDir = await mkdtemp(join(tmpdir(), "omo-goal-limits-state-"))
   const added: ToolRecord[] = []
+  const store = openGoalStore(goalDirectory(stateDir))
   const ctx = {
     location: {
       directory: join(canonical, "session"),
@@ -27,14 +31,18 @@ async function fixture() {
       },
     },
     event: {
-      subscribe: () => {
-        async function* empty(): AsyncGenerator<never> {}
-        return empty()
-      },
+      subscribe: ({ signal }: { signal: AbortSignal }) => ({
+        async *[Symbol.asyncIterator]() {
+          if (!signal.aborted)
+            await new Promise<void>((resolve) =>
+              signal.addEventListener("abort", () => resolve(), { once: true }),
+            )
+        },
+      }),
     },
     tool: {
       async transform(callback: (editor: unknown) => unknown | Promise<unknown>) {
-        await callback({
+        callback({
           namespace() {},
           get() {
             return undefined
@@ -47,8 +55,7 @@ async function fixture() {
       },
     },
   } as unknown as Plugin.Context
-  const dispose = await mountGoal(ctx, stateDir, true)
-  const store = openGoalStore(goalDirectory(stateDir))
+  const dispose = await mountGoal(ctx, stateDir, true, undefined, store)
   const tool = (name: string) => {
     const found = added.find((item) => item.name === name)
     if (!found) throw new Error(`missing registered tool: ${name}`)
@@ -68,8 +75,9 @@ async function fixture() {
     goal,
     async cleanup() {
       await dispose()
-      await rm(canonical, { recursive: true, force: true })
-      await rm(stateDir, { recursive: true, force: true })
+      store.close()
+      await rmRetry(canonical)
+      await rmRetry(stateDir)
     },
   }
 }
@@ -259,8 +267,8 @@ test("budget, cancellation and recovery stay inside the native session", async (
 
 test("omo-goal exposes cancel and recover next to the existing verbs", async () => {
   const dir = await mkdtemp(join(tmpdir(), "omo-goal-limits-cmd-"))
-  const service = createGoalCommandService(dir)
   const store = openGoalStore(goalDirectory(dir))
+  const service = createGoalCommandService(dir, store)
   try {
     // Cancelling a session without a goal is a no-op, not an error.
     expect(await service({ sessionID: "ses_owner", text: "cancel" })).toMatch(/"goal": null/)
@@ -285,6 +293,7 @@ test("omo-goal exposes cancel and recover next to the existing verbs", async () 
       /Usage: omo-goal \[show .*recover <retry\|abandon>/,
     )
   } finally {
-    await rm(dir, { recursive: true, force: true })
+    store.close()
+    await rmRetry(dir)
   }
 })

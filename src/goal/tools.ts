@@ -82,17 +82,20 @@ function render(goal: Goal | null): string {
  * Register the goal tools (gated by `goal_enabled`): create_goal, update_goal
  * and get_goal. State is one JSON file per session under `<stateHome>/goal/`,
  * so objectives persist across restarts and sessions never see each other's
- * goals.
+ * goals. A caller that already owns the state home's goal store passes it in;
+ * otherwise one is opened from the state home.
  */
 export async function mountGoal(
   ctx: Plugin.Context,
   stateHome: string,
   enabled: boolean,
-  options?: { work?(sessionID: string): string | null },
+  options?: { work?(sessionID: string): string | null; quiet?: { intervalMs?: number } },
+  store?: ReturnType<typeof openGoalStore>,
 ): Promise<() => Promise<void>> {
   if (!enabled) return async () => {}
   const dir = goalDirectory(stateHome)
-  const store = openGoalStore(dir)
+  const storeOwned = store === undefined
+  store ??= openGoalStore(dir)
   const registration = await ctx.tool.transform((editor) => {
     editor.namespace({ name: "omo", description: "OmO custom tools" })
     if (
@@ -189,6 +192,7 @@ export async function mountGoal(
   return async () => {
     await stopContinuation()
     registration.dispose()
+    if (storeOwned) store.close()
   }
 }
 
@@ -306,6 +310,7 @@ export async function mountGoalContinuation(
     controller.abort()
     await stopQuiet()
     await loop.catch(() => {})
+    // Caller owns the store and is responsible for closing it.
   }
 }
 
@@ -318,10 +323,14 @@ const GOAL_USAGE =
  * directory under `stateHome` (`<stateHome>/goal/`): empty text shows the
  * current goal, otherwise the first word is the verb. Errors render as
  * `Error: ...` text instead of throwing so the terminal publish path always
- * has something to show.
+ * has something to show. A caller that already owns the state home's goal
+ * store passes it in; otherwise one is opened from the state home.
  */
-export function createGoalCommandService(stateHome: string) {
-  const store = openGoalStore(goalDirectory(stateHome))
+export function createGoalCommandService(
+  stateHome: string,
+  store?: ReturnType<typeof openGoalStore>,
+) {
+  store ??= openGoalStore(goalDirectory(stateHome))
   const render = (value: unknown) => JSON.stringify(value, null, 2)
   return async ({ sessionID, text }: { sessionID: string; text: string }): Promise<string> => {
     const [verb, ...rest] = text.trim().split(/\s+/)

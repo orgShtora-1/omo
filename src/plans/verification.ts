@@ -1,4 +1,5 @@
-import { realpathSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import type { Evidence, PlanStep } from "../contracts"
 export type VerificationResult = { ok: boolean; reason?: string }
@@ -15,6 +16,11 @@ const outsideRoot = (root: string, path: string) => {
   return remainder === ".." || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)
 }
 const sha256Hex = /^[0-9a-fA-F]{64}$/
+
+function computeSha256(filePath: string): string {
+  const content = readFileSync(filePath)
+  return createHash("sha256").update(content).digest("hex")
+}
 
 export function evidenceContentError(
   evidence: readonly Evidence[],
@@ -84,6 +90,16 @@ export function verifyStep(
             ok: false,
             reason: `Evidence ${item.id} artifact is outside project root: ${item.artifact}`,
           }
+        // Verify artifact hash matches file content
+        if (item.artifactHash) {
+          const computedHash = computeSha256(realPath)
+          if (computedHash !== item.artifactHash.toLowerCase()) {
+            return {
+              ok: false,
+              reason: `Evidence ${item.id} artifact hash mismatch: expected ${item.artifactHash}, got ${computedHash}`,
+            }
+          }
+        }
       } catch {
         return {
           ok: false,

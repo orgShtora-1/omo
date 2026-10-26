@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { mountBoulder } from "../../src/boulder/tools"
+import { rmSyncRetry } from "../unit/test-utils"
 
 type RegisteredTool = {
   name: string
@@ -57,11 +58,12 @@ test("boulder tools enforce native project ownership and separate read/edit gate
       },
     },
   } as unknown as Plugin.Context
+  let dispose: () => Promise<void>
   try {
     writeFileSync(join(root, "plan.md"), "- [ ] remaining\n")
     await mountBoulder(ctx, root, false)
     expect(tools.size).toBe(0)
-    const dispose = await mountBoulder(ctx, root, true)
+    dispose = await mountBoulder(ctx, root, true)
     expect(tools.get("omo_boulder_update")?.options.permission).toBe("edit")
     expect(tools.get("omo_boulder_state")?.options.permission).toBe("read")
     const update = tools.get("omo_boulder_update")
@@ -85,9 +87,9 @@ test("boulder tools enforce native project ownership and separate read/edit gate
     expect(JSON.parse((await read.execute({}, { sessionID: "s" })).content).work.status).toBe(
       "paused",
     )
+  } finally {
     await dispose()
     expect(disposed).toBe(true)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
+    rmSyncRetry(root)
   }
 })

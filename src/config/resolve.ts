@@ -16,7 +16,7 @@ import type {
 
 // Defaults exatos da spec aplicados sobre OmoOptions validado.
 type ResolvedProfile = Required<Pick<ProfileConfig, "id" | "mode" | "allowWrite">> &
-  Pick<ProfileConfig, "model" | "allowedModels">
+  Pick<ProfileConfig, "model" | "allowedModels" | "thinkMode">
 
 type ResolvedCategory = Required<Pick<CategoryConfig, "id" | "agent">> &
   Pick<CategoryConfig, "model">
@@ -81,6 +81,7 @@ export function resolveOptions(input: OmoOptions): ResolvedOptions {
       allowWrite: p.allowWrite,
       model: p.model,
       ...(p.allowedModels !== undefined ? { allowedModels: p.allowedModels } : {}),
+      ...(p.thinkMode !== undefined ? { thinkMode: p.thinkMode } : {}),
     })),
     categories: input.categories.map((c) => ({ id: c.id, agent: c.agent, model: c.model })),
     execution: {

@@ -819,6 +819,7 @@ const healthyInputs = () => ({
     "tool.hook",
     "command.transform",
     "permission.list",
+    "mcp.transform",
   ],
   listModels: async () => [{ providerID: "opencode", modelID: "space-bunny-free" }],
   probeGit: async () => ({ available: true, version: "git version 2.55.0" }),

@@ -6,14 +6,8 @@
  */
 
 import { z } from "zod"
-import type { PreemptiveCompactionConfig } from "../context/compaction.js"
 import type { ModelRef } from "../contracts.js"
-import type { OsNotificationsConfig } from "../execution/os-notifications.js"
 import type { McpOptions } from "../mcp/config.js"
-import type { DreamConfig } from "../memory/dream.js"
-import type { ModelFallbackConfig } from "./model-fallback.js"
-import type { ProactiveModelFallbackConfig } from "./model-proactive-fallback.js"
-import type { CategoryConfig, PackageManager, ProfileConfig, ToolGuardsConfig } from "./schema.js"
 
 export const SCHEMA_VERSION = 1 as const
 

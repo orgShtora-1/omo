@@ -17,7 +17,8 @@ describe("concurrent skill catalog reads", () => {
       expect(result).toHaveLength(3)
     }
     // And they should be identical
-    const first = results[0]!
+    const first = results[0]
+    if (!first) throw new Error("expected at least one result")
     for (const r of results.slice(1)) {
       expect(r).toEqual(first)
     }
